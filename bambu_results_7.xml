@@ -1,5 +1,0 @@
-<?xml version="1.0"?>
-<bambu_results bambu_args="bambu --top-fname=top_level --generate-interface=INFER --compiler=I386_GCC8 --clock-period=5 -O3 -v4 --generate-tb=testbench.c --simulate top_level.c " bambu_version="Version: PandA 2024.10 - Revision c2ba6936ca2ed63137095fea0b630a1c66e20e63-main" timestamp="2026-03-18T08:48:05" benchmark_name="top_level_7">
-  <CYCLES value="26540"/>
-  <HLS_execution_time value="50.9399999999999999988"/>
-</bambu_results>
