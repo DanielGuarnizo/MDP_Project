@@ -7,5 +7,5 @@ SWD="$(dirname $(readlink -e $0))"
 
 # STEP: vivado_flow
 cd $SWD
-ulimit -s 131072; vivado -mode batch -nojournal -nolog -source HLS_output/Synthesis/vivado_flow_22/vivado.tcl
+ulimit -s 131072; vivado -mode batch -nojournal -nolog -source HLS_output/Synthesis/vivado_flow_40/vivado.tcl
 

@@ -13,15 +13,15 @@ extern "C" {
     
     
     // DPI IMPORTS
-    // DPI import at HLS_output/simulation/bambu_testbench.v:564
+    // DPI import at HLS_output/simulation/bambu_testbench.v:1779
     extern int m_fini();
-    // DPI import at HLS_output/simulation/bambu_testbench.v:563
+    // DPI import at HLS_output/simulation/bambu_testbench.v:1778
     extern unsigned int m_next(unsigned int state);
-    // DPI import at HLS_output/simulation/bambu_testbench.v:782
+    // DPI import at HLS_output/simulation/bambu_testbench.v:1997
     extern int m_read(unsigned char id, svLogicVecVal* data, unsigned short int bitsize, unsigned int addr, unsigned char shift);
-    // DPI import at HLS_output/simulation/bambu_testbench.v:784
+    // DPI import at HLS_output/simulation/bambu_testbench.v:1999
     extern int m_state(unsigned char id, int data);
-    // DPI import at HLS_output/simulation/bambu_testbench.v:783
+    // DPI import at HLS_output/simulation/bambu_testbench.v:1998
     extern int m_write(unsigned char id, const svLogicVecVal* data, unsigned short int bitsize, unsigned int addr, unsigned char shift);
     
 #ifdef __cplusplus

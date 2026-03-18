@@ -1,65 +1,152 @@
 #define DTYPE float
-#define M_TOTAL 8
-#define K_TOTAL 8
-#define N_TOTAL 8
+#define M_TOTAL 4
+#define P_TOTAL 4
+#define Q_TOTAL 4
+#define C_TOTAL 4
+#define R_TOTAL 3
+#define S_TOTAL 3
 
 
 /* AXI pragmas for parallel memory buses */
-#pragma HLS interface port = dram_in mode = m_axi offset = direct bundle = gmem0
-#pragma HLS interface port = dram_w mode = m_axi offset = direct bundle = gmem1
-#pragma HLS interface port = dram_out mode = m_axi offset = direct bundle = gmem2
+#pragma HLS interface port = dram_in_b0 mode = m_axi offset = direct bundle = gmem_in0
+#pragma HLS interface port = dram_in_b1 mode = m_axi offset = direct bundle = gmem_in1
+#pragma HLS interface port = dram_w_b0  mode = m_axi offset = direct bundle = gmem_w0
+#pragma HLS interface port = dram_w_b1  mode = m_axi offset = direct bundle = gmem_w1
+#pragma HLS interface port = dram_out_b0 mode = m_axi offset = direct bundle = gmem_out0
+#pragma HLS interface port = dram_out_b1 mode = m_axi offset = direct bundle = gmem_out1
+#pragma HLS interface port = dram_out_b2 mode = m_axi offset = direct bundle = gmem_out2
+#pragma HLS interface port = dram_out_b3 mode = m_axi offset = direct bundle = gmem_out3
+#pragma HLS interface port = dram_out_b4 mode = m_axi offset = direct bundle = gmem_out4
+#pragma HLS interface port = dram_out_b5 mode = m_axi offset = direct bundle = gmem_out5
+#pragma HLS interface port = dram_out_b6 mode = m_axi offset = direct bundle = gmem_out6
+#pragma HLS interface port = dram_out_b7 mode = m_axi offset = direct bundle = gmem_out7
 
-void top_level(DTYPE *dram_in, DTYPE *dram_w, DTYPE *dram_out) {
-    // --- LOCAL MEMORY PROMOTION (Solves AXI RAW Hazard) ---
-    DTYPE local_dram_out[8 * 8];
-    for(int i=0;i<8*8;++i) local_dram_out[i]=dram_out[i];
+void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dram_w_b1, DTYPE *dram_out_b0, DTYPE *dram_out_b1, DTYPE *dram_out_b2, DTYPE *dram_out_b3, DTYPE *dram_out_b4, DTYPE *dram_out_b5, DTYPE *dram_out_b6, DTYPE *dram_out_b7) {
+    // ---- CONV kernel (banked in/w/out, Bambu-safe; write-only outputs) ----
+    const int M = 4, P = 4, Q = 4, C = 4, R = 3, S = 3;
+    const int H = 6, W = 6;
+    const int m_sf = 4, p_sf = 1, q_sf = 2;
+    const int Ptiles = 4, Qtiles = 2;
 
-    // Level: DRAM
-    for(int n_dram=0; n_dram<2; ++n_dram) {
-        // Level: GlobalBuffer
-        for(int n_globalbuffer=0; n_globalbuffer<4; ++n_globalbuffer) {
-            // Level: InRegister
-            // Level: WRegister
-            // Level: OutRegister
-            // STEP 1: Fetch current output column
-            DTYPE local_acc[8];
-            for(int mm=0; mm<8; ++mm) local_acc[mm] = local_dram_out[mm*8 + (n_dram * 4 + n_globalbuffer)];
+    if (q_sf == 2) {
+      for (int m = 0; m < M; ++m) {
+        int lane_m = (m_sf==1)?0:(m % m_sf);
+        int cm     = (m_sf==1)?m:(m / m_sf);
+        for (int p = 0; p < P; ++p) {
+          int lane_p = (p_sf==1)?0:(p % p_sf);
+          int cp     = (p_sf==1)?p:(p / p_sf);
+          for (int q0 = 0; q0 < Q; q0 += 2) {
+            int q1 = q0 + 1;
+            int cq = q0 / 2;  // since q_sf==2
+            int out_idx_b = (cm*Ptiles + cp)*Qtiles + cq;
+            int out_bank0 = (lane_m*p_sf + lane_p)*2 + 0;
+            int out_bank1 = (lane_m*p_sf + lane_p)*2 + 1;
 
-            // STEP 2: Multiply into isolated PE registers
-            DTYPE pe_macs[8][8];
-            #pragma GCC unroll 8
-            for(int k_sacols=0; k_sacols<8; ++k_sacols) {
-                #pragma GCC unroll 8
-                for(int m_sarows=0; m_sarows<8; ++m_sarows) {
-                    int global_n = n_dram * 4 + n_globalbuffer;
-                    int global_m = m_sarows;
-                    int global_k = k_sacols;
-                    pe_macs[m_sarows][k_sacols] = dram_w[global_m*8+global_k] * dram_in[global_k*8+global_n];
+            DTYPE acc0 = 0.0f;
+            DTYPE acc1 = 0.0f;
+
+            for (int c = 0; c < C; ++c) {
+              int c_bank = c & 1;
+              int c_blk  = c >> 1;
+              int in_c_base = c_blk * (H * W);
+              int w_mc_base = (m * (C/2) + c_blk) * (R * S);
+
+              if (q1 < Q) {
+                for (int r = 0; r < R; ++r) {
+                  int in_row_base = in_c_base + (p + r) * W;
+                  int w_r_base    = w_mc_base + r * S;
+
+                  for (int s = 0; s < S; ++s) {
+                    int w_idx = w_r_base + s;
+                    DTYPE wv  = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];
+                    DTYPE in0 = (c_bank==0) ? dram_in_b0[in_row_base + (q0 + s)] : dram_in_b1[in_row_base + (q0 + s)];
+                    DTYPE in1 = (c_bank==0) ? dram_in_b0[in_row_base + (q1 + s)] : dram_in_b1[in_row_base + (q1 + s)];
+                    acc0 += wv * in0;
+                    acc1 += wv * in1;
+                  }
                 }
+              } else {
+                // tail: only q0 valid
+                for (int r = 0; r < R; ++r) {
+                  int in_row_base = in_c_base + (p + r) * W;
+                  int w_r_base    = w_mc_base + r * S;
+                  for (int s = 0; s < S; ++s) {
+                    int w_idx = w_r_base + s;
+                    DTYPE wv  = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];
+                    DTYPE in0 = (c_bank==0) ? dram_in_b0[in_row_base + (q0 + s)] : dram_in_b1[in_row_base + (q0 + s)];
+                    acc0 += wv * in0;
+                  }
+                }
+              }
             }
 
-            // STEP 3: Explicit adder tree reduction over K
-            for(int m_sarows=0; m_sarows<8; ++m_sarows) {
-                // Adder tree stage 1
-                DTYPE t_s1_0 = pe_macs[m_sarows][0] + pe_macs[m_sarows][1];
-                DTYPE t_s1_1 = pe_macs[m_sarows][2] + pe_macs[m_sarows][3];
-                DTYPE t_s1_2 = pe_macs[m_sarows][4] + pe_macs[m_sarows][5];
-                DTYPE t_s1_3 = pe_macs[m_sarows][6] + pe_macs[m_sarows][7];
-                // Adder tree stage 2
-                DTYPE t_s2_0 = t_s1_0 + t_s1_1;
-                DTYPE t_s2_1 = t_s1_2 + t_s1_3;
-                // Adder tree stage 3
-                DTYPE t_s3_0 = t_s2_0 + t_s2_1;
-                DTYPE sum = t_s3_0;
-                int global_m = m_sarows;
-                local_acc[global_m] += sum;
+            switch(out_bank0) {
+              case 0: dram_out_b0[out_idx_b] = acc0; break;
+              case 1: dram_out_b1[out_idx_b] = acc0; break;
+              case 2: dram_out_b2[out_idx_b] = acc0; break;
+              case 3: dram_out_b3[out_idx_b] = acc0; break;
+              case 4: dram_out_b4[out_idx_b] = acc0; break;
+              case 5: dram_out_b5[out_idx_b] = acc0; break;
+              case 6: dram_out_b6[out_idx_b] = acc0; break;
+              case 7: dram_out_b7[out_idx_b] = acc0; break;
+              default: break;
             }
 
-            // STEP 4: Write column back
-            for(int mm=0; mm<8; ++mm) local_dram_out[mm*8 + (n_dram * 4 + n_globalbuffer)] = local_acc[mm];
+            if (q1 < Q) {
+              switch(out_bank1) {
+                case 0: dram_out_b0[out_idx_b] = acc1; break;
+                case 1: dram_out_b1[out_idx_b] = acc1; break;
+                case 2: dram_out_b2[out_idx_b] = acc1; break;
+                case 3: dram_out_b3[out_idx_b] = acc1; break;
+                case 4: dram_out_b4[out_idx_b] = acc1; break;
+                case 5: dram_out_b5[out_idx_b] = acc1; break;
+                case 6: dram_out_b6[out_idx_b] = acc1; break;
+                case 7: dram_out_b7[out_idx_b] = acc1; break;
+                default: break;
+              }
+            }
+          }
         }
+      }
+    } else {
+      for (int m = 0; m < M; ++m) {
+        for (int p = 0; p < P; ++p) {
+          for (int q = 0; q < Q; ++q) {
+            int lane_m = (m_sf==1)?0:(m % m_sf);
+            int lane_p = (p_sf==1)?0:(p % p_sf);
+            int lane_q = (q_sf==1)?0:(q % q_sf);
+            int out_bank = (lane_m*p_sf + lane_p)*q_sf + lane_q;
+            int cm = (m_sf==1)?m:(m / m_sf);
+            int cp = (p_sf==1)?p:(p / p_sf);
+            int cq = (q_sf==1)?q:(q / q_sf);
+            int out_idx_b = (cm*Ptiles + cp)*Qtiles + cq;
+            DTYPE acc = 0.0f;
+            for (int c = 0; c < C; ++c) {
+              int c_bank = c & 1;
+              int c_blk  = c >> 1;
+              for (int r = 0; r < R; ++r) {
+                for (int s = 0; s < S; ++s) {
+                  int in_idx = c_blk*(H*W) + (p+r)*W + (q+s);
+                  int w_idx  = (m*(C/2) + c_blk)*(R*S) + r*S + s;
+                  DTYPE in_v = (c_bank==0) ? dram_in_b0[in_idx] : dram_in_b1[in_idx];
+                  DTYPE w_v  = (c_bank==0) ? dram_w_b0[w_idx]  : dram_w_b1[w_idx];
+                  acc += w_v * in_v;
+                }
+              }
+            }
+            switch(out_bank) {
+              case 0: dram_out_b0[out_idx_b] = acc; break;
+              case 1: dram_out_b1[out_idx_b] = acc; break;
+              case 2: dram_out_b2[out_idx_b] = acc; break;
+              case 3: dram_out_b3[out_idx_b] = acc; break;
+              case 4: dram_out_b4[out_idx_b] = acc; break;
+              case 5: dram_out_b5[out_idx_b] = acc; break;
+              case 6: dram_out_b6[out_idx_b] = acc; break;
+              case 7: dram_out_b7[out_idx_b] = acc; break;
+              default: break;
+            }
+          }
+        }
+      }
     }
-
-    // --- WRITE BACK TO EXTERNAL SLOW MEMORY ---
-    for(int i=0;i<8*8;++i) dram_out[i]=local_dram_out[i];
 }

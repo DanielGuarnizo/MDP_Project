@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<memory>
+  <memory_allocation base_address="1073741824">
+    <object scope="top_level" name="in_banks" is_internal="T"/>
+    <object scope="top_level" name="w_banks" is_internal="T"/>
+    <object scope="top_level" name="out_banks" is_internal="T"/>
+  </memory_allocation>
+</memory>

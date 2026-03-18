@@ -8,7 +8,7 @@ SWD="$(dirname $(readlink -e $0))"
 cd ${SWD}
 if [ ! -z "$APPDIR" ]; then LD_LIBRARY_PATH=""; fi
 
-CC="/usr/bin/clang-16"
+CC="/usr/bin/gcc-8"
 SYS_ELF="HLS_output/simulation/testbench"
 SIM_DIR="HLS_output/simulation"
 OUT_LVL="4"
@@ -28,7 +28,7 @@ make -f /opt/panda/share/panda/libmdpi/Makefile.mk \
   MPPTOP_FNAME="__m_pp_top_level" \
   CC="${CC}" \
   BEH_CC="${BEH_CC}" \
-  CFLAGS=" -O3  -fno-builtin-bcmp -fno-builtin-memcpy -fno-builtin-memmove -fno-builtin-memset -ffp-contract=off -fno-slp-vectorize -fno-stack-protector -fno-vectorize -fwrapv  --std=gnu11 -D__BAMBU__ -Wuninitialized   -D__NO_INLINE__  -m32  -fwrapv -flax-vector-conversions -msse2 -fno-strict-aliasing -D__builtin_bambu_time_start\(\)= -D__builtin_bambu_time_stop\(\)= -D__BAMBU_SIM__ -isystem /opt/panda/share/panda/libmdpi/include " \
+  CFLAGS=" -O3  -fno-ipa-icf -fipa-pta -fipa-pure-const -fno-ivopts -fno-partial-inlining -fno-stack-protector -fno-tree-builtin-call-dce -ftree-copy-prop -ftree-dce -fno-tree-loop-distribute-patterns -ftree-loop-if-convert -ftree-loop-if-convert-stores -fno-tree-vectorize -fwrapv --param max-completely-peeled-insns=250 --param tree-reassoc-width=128  --std=gnu11 -DCUSTOM_VERIFICATION -D__BAMBU__ -Wno-implicit-function-declaration -Wno-incompatible-function-pointer-types -Wno-int-conversion -Wuninitialized   -D__NO_INLINE__  -mlong-double-64  -m32  -fwrapv -flax-vector-conversions -msse2 -fno-strict-aliasing -D__builtin_bambu_time_start\(\)= -D__builtin_bambu_time_stop\(\)= -D__BAMBU_SIM__ -isystem /opt/panda/share/panda/libmdpi/include " \
   BEH_CFLAGS="-DVERILATOR -isystem $(dirname $(which verilator))/../share/verilator/include/vltstd -isystem /opt/panda/share/panda/libmdpi/include -D__M_IPC_FILENAME=\\\"${M_IPC_FILENAME}\\\" -D__M_OUT_LVL=${OUT_LVL} -D__M32 -O2" \
   TB_CFLAGS="" \
   SRCS="top_level.c" \
