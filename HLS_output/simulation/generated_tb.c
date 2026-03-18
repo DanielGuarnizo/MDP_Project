@@ -1,6 +1,6 @@
 /*
  * Politecnico di Milano
- * Code created using PandA - Version: PandA 2024.10 - Revision c2ba6936ca2ed63137095fea0b630a1c66e20e63-main - Date 2026-03-17T17:03:39
+ * Code created using PandA - Version: PandA 2024.10 - Revision c2ba6936ca2ed63137095fea0b630a1c66e20e63-main - Date 2026-03-18T08:27:09
  * Bambu executed with: bambu --top-fname=top_level --generate-interface=INFER --clock-period=5 -O3 -v4 --generate-tb=testbench.c --simulate top_level.c 
  */
 
@@ -49,6 +49,6 @@ using namespace __AC_NAMESPACE;
 
 #include <mdpi/mdpi_user.h>
 
-CDECL void top_level(float*, float*, float*, float*, float*, float*, float*, float*, float*, float*);
+CDECL void top_level(float*, float*, float*);
 
 

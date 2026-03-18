@@ -4,7 +4,7 @@ Sim: next state: 2 (retval: 0)
 Sim: Argument setup
 Sim: Simulation started at cycle 3
 Sim: DUT port writeback
-Sim: Simulation ended at cycle 22143
+Sim: Simulation ended at cycle 5887
 Sim: next state: 8 (retval: 0)
 Sim: Testbench returned: 0
-- HLS_output/simulation/bambu_testbench.v:1626: Verilog $finish
+- HLS_output/simulation/bambu_testbench.v:681: Verilog $finish

@@ -1,7 +1,10 @@
 # MDP_Project
 python ./FactorFlow/main_cli.py eyeriss-conv 4 4 4 4 3 3 > ./output/FF_output.txt
 
+
 python ./FactorFlow/main_cli.py eyeriss 8 8 8 > ./output/FF_output.txt
+
+python ./FactorFlow/main_cli.py eyeriss-conv 8 8 8 8 3 3 > ./output/FF_output.txt
 
 python src/generator.py
 

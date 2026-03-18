@@ -1,6 +1,6 @@
 /*
  * Politecnico di Milano
- * Code created using PandA - Version: PandA 2024.10 - Revision c2ba6936ca2ed63137095fea0b630a1c66e20e63-main - Date 2026-03-17T17:03:35
+ * Code created using PandA - Version: PandA 2024.10 - Revision c2ba6936ca2ed63137095fea0b630a1c66e20e63-main - Date 2026-03-18T08:27:07
  * Bambu executed with: bambu --top-fname=top_level --generate-interface=INFER --clock-period=5 -O3 -v4 --generate-tb=testbench.c --simulate top_level.c 
  */
 
@@ -33,7 +33,7 @@ using namespace __AC_NAMESPACE;
 #define EXTERN_CDECL extern "C"
 #endif
 
-CDECL void top_level(float* P0, float* P1, float* P2, float* P3, float* P4, float* P5, float* P6, float* P7, float* P8, float* P9);
+CDECL void top_level(float* P0, float* P1, float* P2);
 #ifndef MDPI_MEMMAP_MODE
 #define MDPI_MEMMAP_MODE MDPI_MEMMAP_DEVICE
 #endif
@@ -128,7 +128,7 @@ template <typename T> T* m_getptr(T* obj) { return obj; }
 #define _m_channelcmp(idx, cmp) _ms_channelcmp(gold, idx, cmp)
 #define _m_retvalcmp(cmp) _ms_retvalcmp(gold, cmp)
 
-EXTERN_CDECL void __m_top_level(float*, float*, float*, float*, float*, float*, float*, float*, float*, float*);
+EXTERN_CDECL void __m_top_level(float*, float*, float*);
 #else
 #define _m_setargptr(...)
 #define _m_argcmp(...)
@@ -142,7 +142,7 @@ EXTERN_CDECL void __m_top_level(float*, float*, float*, float*, float*, float*, 
 #define _m_pp_argcmp(idx, cmp) _ms_argcmp(pp, idx, cmp)
 #define _m_pp_retvalcmp(cmp) _ms_retvalcmp(pp, cmp)
 
-EXTERN_CDECL void __m_pp_top_level(const void*, const void*, void*, void*, void*, void*, void*, void*, void*, void*);
+EXTERN_CDECL void __m_pp_top_level(const void*, const void*, void*);
 #else
 #define _m_pp_setargptr(...)
 #define _m_pp_argcmp(...)
@@ -356,53 +356,32 @@ static void __m_argmap_fini(__m_argmap_t args[], size_t args_count)
    }
 }
 
-void top_level(float* P0, float* P1, float* P2, float* P3, float* P4, float* P5, float* P6, float* P7, float* P8, float* P9)
+void top_level(float* P0, float* P1, float* P2)
 {
    const long double max_ulp = 1;
    size_t i;
    __m_argmap_t args[] = {
       {(void*)P0, 4, m_map_m_axi((void*)P0)},
       {(void*)P1, 4, m_map_m_axi((void*)P1)},
-      {(void*)P2, 4, m_map_m_axi((void*)P2)},
-      {(void*)P3, 4, m_map_m_axi((void*)P3)},
-      {(void*)P4, 4, m_map_m_axi((void*)P4)},
-      {(void*)P5, 4, m_map_m_axi((void*)P5)},
-      {(void*)P6, 4, m_map_m_axi((void*)P6)},
-      {(void*)P7, 4, m_map_m_axi((void*)P7)},
-      {(void*)P8, 4, m_map_m_axi((void*)P8)},
-      {(void*)P9, 4, m_map_m_axi((void*)P9)}};
+      {(void*)P2, 4, m_map_m_axi((void*)P2)}};
    __m_param_alloc(0, 4);
    __m_param_alloc(1, 4);
    __m_param_alloc(2, 4);
-   __m_param_alloc(3, 4);
-   __m_param_alloc(4, 4);
-   __m_param_alloc(5, 4);
-   __m_param_alloc(6, 4);
-   __m_param_alloc(7, 4);
-   __m_param_alloc(8, 4);
-   __m_param_alloc(9, 4);
-   __m_memsetup(args, 10);
+   __m_memsetup(args, 3);
    
    m_interface_m_axi(0, args[0].map_addr, 32, 4);
    m_interface_m_axi(1, args[1].map_addr, 32, 4);
    m_interface_m_axi(2, args[2].map_addr, 32, 4);
-   m_interface_m_axi(3, args[3].map_addr, 32, 4);
-   m_interface_m_axi(4, args[4].map_addr, 32, 4);
-   m_interface_m_axi(5, args[5].map_addr, 32, 4);
-   m_interface_m_axi(6, args[6].map_addr, 32, 4);
-   m_interface_m_axi(7, args[7].map_addr, 32, 4);
-   m_interface_m_axi(8, args[8].map_addr, 32, 4);
-   m_interface_m_axi(9, args[9].map_addr, 32, 4);
-   __m_interface_mem(10);
+   __m_interface_mem(3);
    
    __m_sim_start();
    
    #ifndef CUSTOM_VERIFICATION
-   __m_top_level((float*)P0_gold, (float*)P1_gold, (float*)P2_gold, (float*)P3_gold, (float*)P4_gold, (float*)P5_gold, (float*)P6_gold, (float*)P7_gold, (float*)P8_gold, (float*)P9_gold);
+   __m_top_level((float*)P0_gold, (float*)P1_gold, (float*)P2_gold);
    #endif
    
    #ifdef PP_VERIFICATION
-   __m_pp_top_level((const void*)P0_pp, (const void*)P1_pp, (void*)P2_pp, (void*)P3_pp, (void*)P4_pp, (void*)P5_pp, (void*)P6_pp, (void*)P7_pp, (void*)P8_pp, (void*)P9_pp);
+   __m_pp_top_level((const void*)P0_pp, (const void*)P1_pp, (void*)P2_pp);
    #endif
    
    __m_sim_end();
@@ -414,19 +393,12 @@ void top_level(float* P0, float* P1, float* P2, float* P3, float* P4, float* P5,
    #pragma clang diagnostic ignored "-Wpointer-type-mismatch"
    #endif
    
-   __m_argmap_fini(args, 10);
+   __m_argmap_fini(args, 3);
    
    size_t mismatch_count = 0;
    m_argcmp(0, flt);
    m_argcmp(1, flt);
    m_argcmp(2, flt);
-   m_argcmp(3, flt);
-   m_argcmp(4, flt);
-   m_argcmp(5, flt);
-   m_argcmp(6, flt);
-   m_argcmp(7, flt);
-   m_argcmp(8, flt);
-   m_argcmp(9, flt);
    
    
    if(mismatch_count)
