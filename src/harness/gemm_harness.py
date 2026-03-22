@@ -1,0 +1,1 @@
+# Placeholder so the architecture can extend cleanly later.

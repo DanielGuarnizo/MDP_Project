@@ -1,0 +1,49 @@
+Results file: results.txt
+Reset active: LOW
+Sim: next state: 2 (retval: 0)
+Sim: Argument setup
+Sim: Simulation started at cycle 3
+Sim: DUT port writeback
+Sim: Simulation ended at cycle 28313
+Sim: next state: 8 (retval: 0)
+Sim: Testbench returned: 0
+- HLS_output/simulation/bambu_testbench.v:1896: Verilog $finish
+MDPI driver: Memory size for parameter 0 set to 288 bytes.
+MDPI driver: Memory size for parameter 1 set to 288 bytes.
+MDPI driver: Memory size for parameter 2 set to 288 bytes.
+MDPI driver: Memory size for parameter 3 set to 288 bytes.
+MDPI driver: Memory size for parameter 4 set to 32 bytes.
+MDPI driver: Memory size for parameter 5 set to 32 bytes.
+MDPI driver: Memory size for parameter 6 set to 32 bytes.
+MDPI driver: Memory size for parameter 7 set to 32 bytes.
+MDPI driver: Memory size for parameter 8 set to 32 bytes.
+MDPI driver: Memory size for parameter 9 set to 32 bytes.
+MDPI driver: Memory size for parameter 10 set to 32 bytes.
+MDPI driver: Memory size for parameter 11 set to 32 bytes.
+Running HLS top_level function...
+MDPI driver: Address 0x00412A70 mapped at 0x40000000 (288 bytes)
+MDPI driver: Address 0x00412BA0 mapped at 0x40000120 (288 bytes)
+MDPI driver: Address 0x00412CD0 mapped at 0x40000240 (288 bytes)
+MDPI driver: Address 0x00412E00 mapped at 0x40000360 (288 bytes)
+MDPI driver: Address 0x00412F30 mapped at 0x40000480 (32 bytes)
+MDPI driver: Address 0x00412F60 mapped at 0x400004A0 (32 bytes)
+MDPI driver: Address 0x00412F90 mapped at 0x400004C0 (32 bytes)
+MDPI driver: Address 0x00412FC0 mapped at 0x400004E0 (32 bytes)
+MDPI driver: Address 0x00412FF0 mapped at 0x40000500 (32 bytes)
+MDPI driver: Address 0x00413020 mapped at 0x40000520 (32 bytes)
+MDPI driver: Address 0x00413050 mapped at 0x40000540 (32 bytes)
+MDPI driver: Address 0x00413080 mapped at 0x40000560 (32 bytes)
+MDPI driver: Pointer parameter 0x00412A70 mapped at 0x40000000
+MDPI driver: Pointer parameter 0x00412BA0 mapped at 0x40000120
+MDPI driver: Pointer parameter 0x00412CD0 mapped at 0x40000240
+MDPI driver: Pointer parameter 0x00412E00 mapped at 0x40000360
+MDPI driver: Pointer parameter 0x00412F30 mapped at 0x40000480
+MDPI driver: Pointer parameter 0x00412F60 mapped at 0x400004A0
+MDPI driver: Pointer parameter 0x00412F90 mapped at 0x400004C0
+MDPI driver: Pointer parameter 0x00412FC0 mapped at 0x400004E0
+MDPI driver: Pointer parameter 0x00412FF0 mapped at 0x40000500
+MDPI driver: Pointer parameter 0x00413020 mapped at 0x40000520
+MDPI driver: Pointer parameter 0x00413050 mapped at 0x40000540
+MDPI driver: Pointer parameter 0x00413080 mapped at 0x40000560
+Comparing results...
+SUCCESS: The results match the golden reference!
