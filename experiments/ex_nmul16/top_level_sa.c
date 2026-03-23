@@ -33,16 +33,13 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
     for (int q_dram = 0; q_dram < 2; ++q_dram) {
       // GlobalBuffer → P:4
       for (int p_gb = 0; p_gb < 4; ++p_gb) {
-        // Accumulator: SACols output lanes acc[m_sf][p_sf][q_sf]
-        DTYPE acc[4][1][2];
+        // Accumulator: acc[m_sf][q_sf] (p_sf=1, collapsed)
+        DTYPE acc[4][2];
         #pragma GCC unroll 4
         for (int mi = 0; mi < 4; ++mi) {
-          #pragma GCC unroll 1
-          for (int pi = 0; pi < 1; ++pi) {
-            #pragma GCC unroll 2
-            for (int qi = 0; qi < 2; ++qi) {
-              acc[mi][pi][qi] = 0.0f;
-            }
+          #pragma GCC unroll 2
+          for (int qi = 0; qi < 2; ++qi) {
+            acc[mi][qi] = 0.0f;
           }
         }
 
@@ -67,20 +64,16 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
                 int w_idx = (ml * (C / in_banks) + c_blk) * (R * S) + r * S + s;
                 DTYPE wv = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];
 
-                // SACols P:1 -- unrolled (output row lanes)
-                #pragma GCC unroll 1
-                for (int pl = 0; pl < 1; ++pl) {
-                  int in_row_base = in_c_base + (p_gb * 1 + pl + r) * W;
+                int in_row_base = in_c_base + (p_gb + r) * W;
 
-                  // SACols Q:2 -- unrolled (output col lanes)
-                  #pragma GCC unroll 2
-                  for (int ql = 0; ql < 2; ++ql) {
-                    int in_col = q_base + ql + s;
-                    DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]
-                                            : dram_in_b1[in_row_base + in_col];
-                    acc[ml][pl][ql] += wv * inv;
-                  }  // ql
-                }  // pl
+                // SACols Q:2 -- unrolled (output col lanes)
+                #pragma GCC unroll 2
+                for (int ql = 0; ql < 2; ++ql) {
+                  int in_col = q_base + ql + s;
+                  DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]
+                                          : dram_in_b1[in_row_base + in_col];
+                  acc[ml][ql] += wv * inv;
+                }  // ql
               }  // ml
             }  // s
           }  // c
@@ -90,29 +83,26 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
         // OutRegister: write acc to banked output ports
         #pragma GCC unroll 4
         for (int ml = 0; ml < 4; ++ml) {
-          #pragma GCC unroll 1
-          for (int pl = 0; pl < 1; ++pl) {
-            #pragma GCC unroll 2
-            for (int ql = 0; ql < 2; ++ql) {
-              int out_bank = (ml * 1 + pl) * 2 + ql;
-              int cm = 0;
-              int cp = p_gb;
-              int cq = q_dram;
-              int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;
-              DTYPE v = acc[ml][pl][ql];
-              switch(out_bank) {
-                case 0: dram_out_b0[out_idx_b] = v; break;
-                case 1: dram_out_b1[out_idx_b] = v; break;
-                case 2: dram_out_b2[out_idx_b] = v; break;
-                case 3: dram_out_b3[out_idx_b] = v; break;
-                case 4: dram_out_b4[out_idx_b] = v; break;
-                case 5: dram_out_b5[out_idx_b] = v; break;
-                case 6: dram_out_b6[out_idx_b] = v; break;
-                case 7: dram_out_b7[out_idx_b] = v; break;
-                default: break;
-              }
-            }  // ql
-          }  // pl
+          #pragma GCC unroll 2
+          for (int ql = 0; ql < 2; ++ql) {
+            int out_bank = ml * 2 + ql;
+            int cm = 0;
+            int cp = p_gb;
+            int cq = q_dram;
+            int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;
+            DTYPE v = acc[ml][ql];
+            switch(out_bank) {
+              case 0: dram_out_b0[out_idx_b] = v; break;
+              case 1: dram_out_b1[out_idx_b] = v; break;
+              case 2: dram_out_b2[out_idx_b] = v; break;
+              case 3: dram_out_b3[out_idx_b] = v; break;
+              case 4: dram_out_b4[out_idx_b] = v; break;
+              case 5: dram_out_b5[out_idx_b] = v; break;
+              case 6: dram_out_b6[out_idx_b] = v; break;
+              case 7: dram_out_b7[out_idx_b] = v; break;
+              default: break;
+            }
+          }  // ql
         }  // ml
       }  // outer
     }  // outer

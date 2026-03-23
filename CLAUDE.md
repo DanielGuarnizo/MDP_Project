@@ -29,15 +29,20 @@ gcc -O2 -o cpu_seq top_level_seq.c testbench_common.c -lm && ./cpu_seq
 **Bambu co-simulation + cycle count (slow):**
 ```bash
 cd experiments/ex2
-./run_compare.sh          # runs both seq and sa, prints cycle counts
-./compile_bambu.sh        # runs only sa (default) or: ./compile_bambu.sh top_level_seq.c
+./run_compare.sh              # default N_mul (from config, or 1 if unset)
+./run_compare.sh 2            # override N_mul=2  (-C=__float_mul=2)
+./run_compare.sh 4            # override N_mul=4
+./compile_bambu.sh            # compile SA with default N_mul
+./compile_bambu.sh top_level_seq.c 4   # compile SEQ with N_mul=4
 ```
+
+`experiments/ex_nmul{2,4,8,16}/` are redundant — use `./run_compare.sh N` from ex2 instead.
 
 **Analytical cycle model (no Bambu needed):**
 ```bash
 python src/model.py --ff experiments/ex2/FF_output/FF_output.txt --n-mul 1 2 4 8 16
-# With calibration from a known measurement:
-python src/model.py --ff experiments/ex2/FF_output/FF_output.txt --measured 1:22895
+# Two-point calibration (serial + parallel regime):
+python src/model.py --ff experiments/ex2/FF_output/FF_output.txt --measured 1:23660 2:4148
 ```
 
 **Run FactorFlow directly:**

@@ -54,7 +54,8 @@ run_bambu () {
       --tb-param-size=dram_out_b5:4 \
       --tb-param-size=dram_out_b6:4 \
       --tb-param-size=dram_out_b7:4 \
-      --simulate 
+      -C=__float_mul=4 \
+      --simulate
   ) > "${log}" 2>&1
 
   # Extract cycles from the log inside outdir

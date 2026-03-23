@@ -10,7 +10,8 @@
       "Read(//usr/bin/**)",
       "Bash(command -v github)",
       "Bash(git remote:*)",
-      "Bash(pip show:*)"
+      "Bash(pip show:*)",
+      "Bash(gh issue:*)"
     ]
   }
 }

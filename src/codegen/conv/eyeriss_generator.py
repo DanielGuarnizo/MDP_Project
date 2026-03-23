@@ -59,7 +59,7 @@ def generate_experiment(mapping: MappingInfo, config: Dict[str, Any], out_dir: P
 
     bambu_cfg = config.get("bambu", {}) or {}
     compile_sh = _emit_compile_bambu_sh(bambu_cfg, tb_sizes)
-    compare_sh = _emit_run_compare_sh(tb_sizes)
+    compare_sh = _emit_run_compare_sh(bambu_cfg, tb_sizes)
 
     _write(out_dir / "top_level_seq.c", seq_c)
     _write(out_dir / "top_level_sa.c",  sa_c)
@@ -389,19 +389,31 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: ConvBankSpec) -> str:
         code.append(f"{indent}for (int {vname} = 0; {vname} < {fac}; ++{vname}) {{")
         indent += "  "
 
-    # -- Accumulator declaration + init (SACols dims: m_sf, p_sf, q_sf) --
-    code.append(f"{indent}// Accumulator: SACols output lanes acc[m_sf][p_sf][q_sf]")
-    code.append(f"{indent}DTYPE acc[{m_sf}][{p_sf}][{q_sf}];")
-    code.append(f"{indent}#pragma GCC unroll {m_sf}")
-    code.append(f"{indent}for (int mi = 0; mi < {m_sf}; ++mi) {{")
-    code.append(f"{indent}  #pragma GCC unroll {p_sf}")
-    code.append(f"{indent}  for (int pi = 0; pi < {p_sf}; ++pi) {{")
-    code.append(f"{indent}    #pragma GCC unroll {q_sf}")
-    code.append(f"{indent}    for (int qi = 0; qi < {q_sf}; ++qi) {{")
-    code.append(f"{indent}      acc[mi][pi][qi] = 0.0f;")
-    code.append(f"{indent}    }}")
-    code.append(f"{indent}  }}")
-    code.append(f"{indent}}}")
+    # -- Accumulator declaration + init --
+    # Collapse the trivial p-dimension when p_sf==1 to avoid Bambu 3D-array overhead
+    if p_sf == 1:
+        code.append(f"{indent}// Accumulator: acc[m_sf][q_sf] (p_sf=1, collapsed)")
+        code.append(f"{indent}DTYPE acc[{m_sf}][{q_sf}];")
+        code.append(f"{indent}#pragma GCC unroll {m_sf}")
+        code.append(f"{indent}for (int mi = 0; mi < {m_sf}; ++mi) {{")
+        code.append(f"{indent}  #pragma GCC unroll {q_sf}")
+        code.append(f"{indent}  for (int qi = 0; qi < {q_sf}; ++qi) {{")
+        code.append(f"{indent}    acc[mi][qi] = 0.0f;")
+        code.append(f"{indent}  }}")
+        code.append(f"{indent}}}")
+    else:
+        code.append(f"{indent}// Accumulator: SACols output lanes acc[m_sf][p_sf][q_sf]")
+        code.append(f"{indent}DTYPE acc[{m_sf}][{p_sf}][{q_sf}];")
+        code.append(f"{indent}#pragma GCC unroll {m_sf}")
+        code.append(f"{indent}for (int mi = 0; mi < {m_sf}; ++mi) {{")
+        code.append(f"{indent}  #pragma GCC unroll {p_sf}")
+        code.append(f"{indent}  for (int pi = 0; pi < {p_sf}; ++pi) {{")
+        code.append(f"{indent}    #pragma GCC unroll {q_sf}")
+        code.append(f"{indent}    for (int qi = 0; qi < {q_sf}; ++qi) {{")
+        code.append(f"{indent}      acc[mi][pi][qi] = 0.0f;")
+        code.append(f"{indent}    }}")
+        code.append(f"{indent}  }}")
+        code.append(f"{indent}}}")
     code.append("")
 
     # -- Inner sequential loops (WRegister R) --
@@ -451,28 +463,46 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: ConvBankSpec) -> str:
     code.append(f"{indent}      DTYPE wv = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];")
     code.append("")
 
-    code.append(f"{indent}      // SACols P:{p_sf} -- unrolled (output row lanes)")
-    code.append(f"{indent}      #pragma GCC unroll {p_sf}")
-    code.append(f"{indent}      for (int pl = 0; pl < {p_sf}; ++pl) {{")
+    if p_sf == 1:
+        # p_sf==1: no pl loop, inline p_row directly
+        if outer_p_var:
+            p_row_expr = f"({outer_p_var} + {r_var})"
+        else:
+            p_row_expr = f"{r_var}"
 
-    if outer_p_var:
-        p_row_expr = f"({outer_p_var} * {p_sf} + pl + {r_var})"
+        code.append(f"{indent}      int in_row_base = in_c_base + {p_row_expr} * W;")
+        code.append("")
+        code.append(f"{indent}      // SACols Q:{q_sf} -- unrolled (output col lanes)")
+        code.append(f"{indent}      #pragma GCC unroll {q_sf}")
+        code.append(f"{indent}      for (int ql = 0; ql < {q_sf}; ++ql) {{")
+        code.append(f"{indent}        int in_col = q_base + ql + s;")
+        code.append(f"{indent}        DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]")
+        code.append(f"{indent}                                : dram_in_b1[in_row_base + in_col];")
+        code.append(f"{indent}        acc[ml][ql] += wv * inv;")
+        code.append(f"{indent}      }}  // ql")
+        code.append(f"{indent}    }}  // ml")
     else:
-        p_row_expr = f"(pl + {r_var})"
+        code.append(f"{indent}      // SACols P:{p_sf} -- unrolled (output row lanes)")
+        code.append(f"{indent}      #pragma GCC unroll {p_sf}")
+        code.append(f"{indent}      for (int pl = 0; pl < {p_sf}; ++pl) {{")
 
-    code.append(f"{indent}        int in_row_base = in_c_base + {p_row_expr} * W;")
-    code.append("")
+        if outer_p_var:
+            p_row_expr = f"({outer_p_var} * {p_sf} + pl + {r_var})"
+        else:
+            p_row_expr = f"(pl + {r_var})"
 
-    code.append(f"{indent}        // SACols Q:{q_sf} -- unrolled (output col lanes)")
-    code.append(f"{indent}        #pragma GCC unroll {q_sf}")
-    code.append(f"{indent}        for (int ql = 0; ql < {q_sf}; ++ql) {{")
-    code.append(f"{indent}          int in_col = q_base + ql + s;")
-    code.append(f"{indent}          DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]")
-    code.append(f"{indent}                                  : dram_in_b1[in_row_base + in_col];")
-    code.append(f"{indent}          acc[ml][pl][ql] += wv * inv;")
-    code.append(f"{indent}        }}  // ql")
-    code.append(f"{indent}      }}  // pl")
-    code.append(f"{indent}    }}  // ml")
+        code.append(f"{indent}        int in_row_base = in_c_base + {p_row_expr} * W;")
+        code.append("")
+        code.append(f"{indent}        // SACols Q:{q_sf} -- unrolled (output col lanes)")
+        code.append(f"{indent}        #pragma GCC unroll {q_sf}")
+        code.append(f"{indent}        for (int ql = 0; ql < {q_sf}; ++ql) {{")
+        code.append(f"{indent}          int in_col = q_base + ql + s;")
+        code.append(f"{indent}          DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]")
+        code.append(f"{indent}                                  : dram_in_b1[in_row_base + in_col];")
+        code.append(f"{indent}          acc[ml][pl][ql] += wv * inv;")
+        code.append(f"{indent}        }}  // ql")
+        code.append(f"{indent}      }}  // pl")
+        code.append(f"{indent}    }}  // ml")
     code.append(f"{indent}  }}  // s")
     code.append(f"{indent}}}  // c")
     code.append("")
@@ -483,37 +513,49 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: ConvBankSpec) -> str:
         code.append(f"{indent}}}  // inner seq")
     code.append("")
 
-    # -- Output write: loop over ml, pl, ql and write acc to banked ports --
+    # -- Output write: loop over ml, [pl,] ql and write acc to banked ports --
     code.append(f"{indent}// OutRegister: write acc to banked output ports")
-    code.append(f"{indent}#pragma GCC unroll {m_sf}")
-    code.append(f"{indent}for (int ml = 0; ml < {m_sf}; ++ml) {{")
-    code.append(f"{indent}  #pragma GCC unroll {p_sf}")
-    code.append(f"{indent}  for (int pl = 0; pl < {p_sf}; ++pl) {{")
-    code.append(f"{indent}    #pragma GCC unroll {q_sf}")
-    code.append(f"{indent}    for (int ql = 0; ql < {q_sf}; ++ql) {{")
-    code.append(f"{indent}      int out_bank = (ml * {p_sf} + pl) * {q_sf} + ql;")
-
-    # Tile indices for output array
     cm_expr = f"{outer_m_var}" if outer_m_var else "0"
-    if outer_p_var:
-        cp_expr = f"{outer_p_var}"
-    else:
-        # No outer P loop: p_sf > 1 tiles are covered inside (pl is the only p index)
-        # But without an outer p loop, each pl maps to a different output element.
-        # This case requires careful thought -- for now use pl directly as cp
-        cp_expr = "pl"
     cq_expr = f"{outer_q_var}" if outer_q_var else "0"
 
-    code.append(f"{indent}      int cm = {cm_expr};")
-    code.append(f"{indent}      int cp = {cp_expr};")
-    code.append(f"{indent}      int cq = {cq_expr};")
-    code.append(f"{indent}      int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;")
-    code.append(f"{indent}      DTYPE v = acc[ml][pl][ql];")
-    code.append(_emit_out_store_switch_fixed("out_bank", bank.out_banks,
-                                             "out_idx_b", "v", f"{indent}      "))
-    code.append(f"{indent}    }}  // ql")
-    code.append(f"{indent}  }}  // pl")
-    code.append(f"{indent}}}  // ml")
+    if p_sf == 1:
+        cp_expr = f"{outer_p_var}" if outer_p_var else "0"
+        code.append(f"{indent}#pragma GCC unroll {m_sf}")
+        code.append(f"{indent}for (int ml = 0; ml < {m_sf}; ++ml) {{")
+        code.append(f"{indent}  #pragma GCC unroll {q_sf}")
+        code.append(f"{indent}  for (int ql = 0; ql < {q_sf}; ++ql) {{")
+        code.append(f"{indent}    int out_bank = ml * {q_sf} + ql;")
+        code.append(f"{indent}    int cm = {cm_expr};")
+        code.append(f"{indent}    int cp = {cp_expr};")
+        code.append(f"{indent}    int cq = {cq_expr};")
+        code.append(f"{indent}    int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;")
+        code.append(f"{indent}    DTYPE v = acc[ml][ql];")
+        code.append(_emit_out_store_switch_fixed("out_bank", bank.out_banks,
+                                                 "out_idx_b", "v", f"{indent}    "))
+        code.append(f"{indent}  }}  // ql")
+        code.append(f"{indent}}}  // ml")
+    else:
+        if outer_p_var:
+            cp_expr = f"{outer_p_var}"
+        else:
+            cp_expr = "pl"
+        code.append(f"{indent}#pragma GCC unroll {m_sf}")
+        code.append(f"{indent}for (int ml = 0; ml < {m_sf}; ++ml) {{")
+        code.append(f"{indent}  #pragma GCC unroll {p_sf}")
+        code.append(f"{indent}  for (int pl = 0; pl < {p_sf}; ++pl) {{")
+        code.append(f"{indent}    #pragma GCC unroll {q_sf}")
+        code.append(f"{indent}    for (int ql = 0; ql < {q_sf}; ++ql) {{")
+        code.append(f"{indent}      int out_bank = (ml * {p_sf} + pl) * {q_sf} + ql;")
+        code.append(f"{indent}      int cm = {cm_expr};")
+        code.append(f"{indent}      int cp = {cp_expr};")
+        code.append(f"{indent}      int cq = {cq_expr};")
+        code.append(f"{indent}      int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;")
+        code.append(f"{indent}      DTYPE v = acc[ml][pl][ql];")
+        code.append(_emit_out_store_switch_fixed("out_bank", bank.out_banks,
+                                                 "out_idx_b", "v", f"{indent}      "))
+        code.append(f"{indent}    }}  // ql")
+        code.append(f"{indent}  }}  // pl")
+        code.append(f"{indent}}}  // ml")
 
     # Close outer temporal loops
     for _ in outer_loop_specs:
@@ -529,11 +571,27 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: ConvBankSpec) -> str:
 # Scripts
 # =========================
 
+def _extract_float_mul(extra_args: list) -> Tuple[str, list]:
+    """Split extra_args into (float_mul_val, other_args).
+    float_mul_val is '' if no -C=__float_mul=N flag is present."""
+    import re
+    pat = re.compile(r"^-C=__float_mul=(\d+)$")
+    val = ""
+    other = []
+    for a in extra_args:
+        m = pat.match(a.strip())
+        if m:
+            val = m.group(1)
+        else:
+            other.append(a)
+    return val, other
+
+
 def _emit_compile_bambu_sh(bambu_cfg: Dict[str, Any], tb_sizes: Dict[str, int]) -> str:
     """
     A generalistic compile script:
-      ./compile_bambu.sh [top_file.c]
-    Defaults to top_level_sa.c if omitted.
+      ./compile_bambu.sh [top_file.c [N_MUL]]
+    Defaults to top_level_sa.c if top omitted; N_MUL overrides -C=__float_mul.
     """
     clock = bambu_cfg.get("clock_period", 5)
     compiler = bambu_cfg.get("compiler", "I386_GCC8")
@@ -541,19 +599,28 @@ def _emit_compile_bambu_sh(bambu_cfg: Dict[str, Any], tb_sizes: Dict[str, int]) 
     v = bambu_cfg.get("v", 4)
     extra_args = bambu_cfg.get("extra_args", []) or []
 
-    extra = ""
-    for name, sz in tb_sizes.items():
-        extra += f"  --tb-param-size={name}:{sz} \\\n"
+    float_mul_default, other_args = _extract_float_mul(extra_args)
 
-    extra2 = ""
-    for a in extra_args:
-        extra2 += f"  {a} \\\n"
+    tb_flags = ""
+    for name, sz in tb_sizes.items():
+        tb_flags += f"  --tb-param-size={name}:{sz} \\\n"
+
+    other_flags = ""
+    for a in other_args:
+        other_flags += f"  {a} \\\n"
 
     return f"""#!/bin/bash
 set -euo pipefail
 
 TOP="${{1:-top_level_sa.c}}"
 TB="testbench_common.c"
+N_MUL_DEFAULT="{float_mul_default}"
+N_MUL="${{2:-$N_MUL_DEFAULT}}"
+
+FLOAT_MUL_FLAG=""
+if [[ -n "$N_MUL" ]]; then
+  FLOAT_MUL_FLAG="-C=__float_mul=$N_MUL"
+fi
 
 bambu "$TOP" \\
   --top-fname=top_level \\
@@ -562,14 +629,14 @@ bambu "$TOP" \\
   --clock-period={clock} \\
   -O{opt} -v{v} \\
   --generate-tb="$TB" \\
-{extra}{extra2}  --simulate \\
-  "${{@:2}}"
+{tb_flags}{other_flags}${{FLOAT_MUL_FLAG:+$FLOAT_MUL_FLAG}} \\
+  --simulate
 """
 
 
 
 
-def _emit_run_compare_sh(tb_sizes: Dict[str, int]) -> str:
+def _emit_run_compare_sh(bambu_cfg: Dict[str, Any], tb_sizes: Dict[str, int]) -> str:
     """
     One-command runner:
       - CPU correctness for seq + sa
@@ -578,9 +645,21 @@ def _emit_run_compare_sh(tb_sizes: Dict[str, int]) -> str:
       - stores ALL bambu-generated files under Bambu_outputs/{seq,sa}
       - stores logs under Bambu_outputs/{seq,sa}/bambu_{seq,sa}.log
     """
+    clock    = bambu_cfg.get("clock_period", 5)
+    compiler = bambu_cfg.get("compiler", "I386_GCC8")
+    opt      = bambu_cfg.get("opt_level", 3)
+    v        = bambu_cfg.get("v", 4)
+    extra_args = bambu_cfg.get("extra_args", []) or []
+
+    float_mul_default, other_args = _extract_float_mul(extra_args)
+
     tb_flags = ""
     for name, sz in tb_sizes.items():
         tb_flags += f'      --tb-param-size={name}:{sz} \\\n'
+
+    other_flags = ""
+    for a in other_args:
+        other_flags += f'      {a} \\\n'
 
     return f"""#!/bin/bash
 set -euo pipefail
@@ -590,6 +669,10 @@ SA="top_level_sa.c"
 TB="testbench_common.c"
 
 BAMBU_OUT_ROOT="Bambu_outputs"
+
+# Optional first argument: N_MUL overrides -C=__float_mul=N
+N_MUL_DEFAULT="{float_mul_default}"
+N_MUL="${{1:-$N_MUL_DEFAULT}}"
 
 echo
 echo "============================================================"
@@ -612,6 +695,11 @@ run_bambu () {{
   local outdir="${{BAMBU_OUT_ROOT}}/${{tag}}"
   local log="${{outdir}}/bambu_${{tag}}.log"
 
+  local float_mul_flag=""
+  if [[ -n "$N_MUL" ]]; then
+    float_mul_flag="-C=__float_mul=$N_MUL"
+  fi
+
   rm -rf "${{outdir}}"
   mkdir -p "${{outdir}}"
 
@@ -622,11 +710,12 @@ run_bambu () {{
     bambu "../../${{top}}" \\
       --top-fname=top_level \\
       --generate-interface=INFER \\
-      --compiler=I386_GCC8 \\
-      --clock-period=5 \\
-      -O3 -v4 \\
+      --compiler={compiler} \\
+      --clock-period={clock} \\
+      -O{opt} -v{v} \\
       --generate-tb="../../${{TB}}" \\
-{tb_flags}      --simulate 
+{tb_flags}{other_flags}${{float_mul_flag:+${{float_mul_flag}}}} \\
+      --simulate
   ) > "${{log}}" 2>&1
 
   # Extract cycles from the log inside outdir

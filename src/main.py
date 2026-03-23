@@ -92,6 +92,11 @@ def _dispatch_and_generate(mapping, config, out_dir):
         generate_experiment(mapping=mapping, config=config, out_dir=out_dir)
         return
 
+    if wtype == "GEMM" and arch == "eyeriss":
+        from codegen.gemm.eyeriss_generator import generate_experiment
+        generate_experiment(mapping=mapping, config=config, out_dir=out_dir)
+        return
+
     raise NotImplementedError(
         f"No generator for arch={arch!r} workload={wtype!r} (arch_workload={mapping.arch_workload!r})"
     )

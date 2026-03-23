@@ -3,6 +3,13 @@ set -euo pipefail
 
 TOP="${1:-top_level_sa.c}"
 TB="testbench_common.c"
+N_MUL_DEFAULT=""
+N_MUL="${2:-$N_MUL_DEFAULT}"
+
+FLOAT_MUL_FLAG=""
+if [[ -n "$N_MUL" ]]; then
+  FLOAT_MUL_FLAG="-C=__float_mul=$N_MUL"
+fi
 
 bambu "$TOP" \
   --top-fname=top_level \
@@ -23,5 +30,5 @@ bambu "$TOP" \
   --tb-param-size=dram_out_b5:4 \
   --tb-param-size=dram_out_b6:4 \
   --tb-param-size=dram_out_b7:4 \
-  --simulate \
-  "${@:2}"
+${FLOAT_MUL_FLAG:+$FLOAT_MUL_FLAG} \
+  --simulate

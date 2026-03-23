@@ -1,0 +1,7 @@
+{
+  "eyeriss-conv__I386_GCC8__5": {
+    "alpha_s": 13.6921,
+    "alpha_p": 7.2014,
+    "source": "measured ex2 eyeriss-conv N_mul=1:23660 N_mul=2:4148"
+  }
+}

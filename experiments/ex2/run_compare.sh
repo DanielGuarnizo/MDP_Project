@@ -7,6 +7,10 @@ TB="testbench_common.c"
 
 BAMBU_OUT_ROOT="Bambu_outputs"
 
+# Optional first argument: N_MUL overrides -C=__float_mul=N
+N_MUL_DEFAULT=""
+N_MUL="${1:-$N_MUL_DEFAULT}"
+
 echo
 echo "============================================================"
 echo "[CPU] correctness for $SEQ"
@@ -27,6 +31,11 @@ run_bambu () {
 
   local outdir="${BAMBU_OUT_ROOT}/${tag}"
   local log="${outdir}/bambu_${tag}.log"
+
+  local float_mul_flag=""
+  if [[ -n "$N_MUL" ]]; then
+    float_mul_flag="-C=__float_mul=$N_MUL"
+  fi
 
   rm -rf "${outdir}"
   mkdir -p "${outdir}"
@@ -54,7 +63,8 @@ run_bambu () {
       --tb-param-size=dram_out_b5:4 \
       --tb-param-size=dram_out_b6:4 \
       --tb-param-size=dram_out_b7:4 \
-      --simulate 
+${float_mul_flag:+${float_mul_flag}} \
+      --simulate
   ) > "${log}" 2>&1
 
   # Extract cycles from the log inside outdir

@@ -20,11 +20,12 @@ def _parse_dim_dict(braced: str) -> Dict[str, int]:
     return out
 
 
-def _infer_arch_and_workload(arch_workload: str) -> tuple[str, str]:
-    # e.g. "eyeriss-conv" -> ("eyeriss","CONV")
+def _infer_arch_and_workload(arch_workload: str) -> tuple[str, str | None]:
+    # e.g. "eyeriss-conv" -> ("eyeriss","CONV"), "eyeriss" -> ("eyeriss", None)
     toks = arch_workload.strip().lower().split("-")
     if len(toks) < 2:
-        raise RuntimeError(f"Cannot infer arch/workload from '{arch_workload}'")
+        # No workload suffix — defer inference to after dims are parsed
+        return toks[0], None
     arch = toks[0]
     wl = toks[-1]
     if wl == "conv":
@@ -66,6 +67,16 @@ def parse_ff_output(path: str) -> MappingInfo:
     if not info.dims:
         raise RuntimeError("FF_output missing 'Computation: {...}' line.")
 
+    # Infer workload from dims when arch had no workload suffix (e.g. "eyeriss")
+    if info.workload is None:
+        dims = info.dims
+        if "K" in dims and "N" in dims and "R" not in dims:
+            info.workload = "GEMM"
+        else:
+            raise RuntimeError(
+                f"Cannot infer workload for arch '{info.arch_workload}' from dims {set(dims)}"
+            )
+
     # ---- parse mapping block (levels) ----
     # Only parse after the LAST "Final condition:" or "Mapping:" marker so we
     # don't pick up the initial condition block (which shows all dims at DRAM).
@@ -105,8 +116,8 @@ def parse_ff_output(path: str) -> MappingInfo:
             if lvl not in info.spatial_levels:
                 info.spatial_levels.append(lvl)
 
-    # Eyeriss-only CONV supported today
-    if info.workload == "CONV" and info.arch != "eyeriss":
-        raise RuntimeError(f"Currently only eyeriss-conv is supported. Got: {info.arch_workload}")
+    # Block unsupported arch combinations
+    if info.arch not in ("eyeriss",):
+        raise RuntimeError(f"Unsupported arch: {info.arch_workload!r}")
 
     return info
