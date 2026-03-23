@@ -67,12 +67,17 @@ def parse_ff_output(path: str) -> MappingInfo:
         raise RuntimeError("FF_output missing 'Computation: {...}' line.")
 
     # ---- parse mapping block (levels) ----
-    # Accept forms like:
-    #   "DRAM ----------> Q: 2"
-    #   "SACols --------> Q: 2, M: 4"
+    # Only parse after the LAST "Final condition:" or "Mapping:" marker so we
+    # don't pick up the initial condition block (which shows all dims at DRAM).
     map_line = re.compile(r"^\s*([A-Za-z0-9_]+)\s*-+\>\s*(.+)\s*$")
+    section_marker = re.compile(r"^\s*(Final condition|Mapping)\s*:", re.IGNORECASE)
 
-    for ln in lines:
+    final_start = 0
+    for i, ln in enumerate(lines):
+        if section_marker.match(ln):
+            final_start = i
+
+    for ln in lines[final_start:]:
         mm = map_line.match(ln)
         if not mm:
             continue

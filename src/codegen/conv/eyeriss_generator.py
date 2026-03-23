@@ -273,114 +273,252 @@ def _emit_top_level_seq(mapping: MappingInfo, bank: ConvBankSpec) -> str:
 # top_level_sa.c  (Eyeriss SA)
 # =========================
 
+def _classify_levels(mapping: MappingInfo):
+    """
+    Split spatial_levels into three groups based on whether they are FanoutLevels
+    (name contains "SA") or MemLevels:
+      - outer_mem: MemLevels before the first FanoutLevel  (DRAM, GlobalBuffer)
+      - fanout:    FanoutLevels in order                   (SACols, SARows)
+      - inner_mem: MemLevels after the last FanoutLevel    (WRegister, InRegister)
+                   (OutRegister excluded -- it's the accumulator, not a loop)
+    Returns (outer_mem, fanout, inner_mem) as lists of level names.
+    """
+    levels = mapping.spatial_levels
+    tiling = mapping.tiling
+
+    fa_idx = [i for i, l in enumerate(levels) if "SA" in l]
+    if not fa_idx:
+        return list(levels), [], []
+
+    first_fa, last_fa = fa_idx[0], fa_idx[-1]
+    outer_mem  = [l for l in levels[:first_fa]   if tiling.get(l)]
+    fanout     = [levels[i] for i in fa_idx]
+    inner_mem  = [l for l in levels[last_fa+1:]
+                  if "Register" in l and "Out" not in l and tiling.get(l)]
+    return outer_mem, fanout, inner_mem
+
+
 def _emit_top_level_sa(mapping: MappingInfo, bank: ConvBankSpec) -> str:
     """
-    SA-shaped code for Eyeriss-CONV:
-      DRAM ----------> Q: 2     (q_dram tiles)
-      GlobalBuffer --> P: 4     (p loop)
-      SACols --------> Q: 2, M: 4   (compute 8 outputs per (p,q_dram))
-      SARows --------> S: 3, C: 4   (unroll s and c)
-      WRegister -----> R: 3         (keep r sequential; matches the best 20996 result)
-      OutRegister ---             (write once per output)
-
-    IMPORTANT:
-      - This SA generator is specific to your current Eyeriss conv assumptions:
-          p_sf == 1, q_sf == 2, and m_sf == M (M lanes inside SACols)
-      - If mapping differs, we fall back to seq code.
+    Generalized SA-shaped kernel (Option B):
+    - Loop structure derived directly from the FF mapping hierarchy.
+    - Outer temporal loops  → MemLevels above FanoutLevels (DRAM, GlobalBuffer).
+    - Accumulator           → acc[m_sf][p_sf][q_sf] indexed by SACols output dims.
+    - Inner sequential loop → MemLevels below FanoutLevels (WRegister R).
+    - Unrolled compute body → FanoutLevel dims (SARows C,S; SACols M,Q)
+                              with #pragma GCC unroll N.
+    - Output write          → generalized for arbitrary (m_sf, p_sf, q_sf).
+    Always emitted (no fallback to seq).
     """
     d = mapping.dims
     M = int(d["M"]); P = int(d["P"]); Q = int(d["Q"])
     C = int(d.get("C", 1)); R = int(d.get("R", 1)); S = int(d.get("S", 1))
-    H = P + R - 1
-    W = Q + S - 1
+    H = P + R - 1; W = Q + S - 1
+
+    m_sf = bank.m_sf; p_sf = bank.p_sf; q_sf = bank.q_sf
+    Ptiles = bank.p_tiles; Qtiles = bank.q_tiles
+    in_banks = bank.in_banks  # 2
 
     hdr = _emit_headers_and_pragmas(bank)
     sig = _emit_top_signature(bank)
 
-    # Guard: only apply “fast SA” when it matches Eyeriss mapping we tuned.
-    # Otherwise, fall back to seq baseline.
-    if not (bank.q_sf == 2 and bank.p_sf == 1 and bank.m_sf == M):
-        # fallback: still produce a valid top_level_sa.c, but sequential
-        return _emit_top_level_seq(mapping, bank).replace("top_level_seq", "top_level_sa")
+    outer_mem, fanout, inner_mem = _classify_levels(mapping)
+    tiling = mapping.tiling
 
+    # ---- Outer temporal loops ----
+    # Collect (varname, factor) for each dim at each outer MemLevel.
+    # Dims that appear at FanoutLevels as output dims (M, P, Q) have corresponding
+    # outer tile variables: q_outer (= cq), p_outer (= cp), m_outer (= cm).
+    def _level_short(lvl):
+        s = {"DRAM": "dram", "GlobalBuffer": "gb", "WRegister": "wr", "InRegister": "ir"}
+        return s.get(lvl, lvl.lower()[:3])
+
+    # We need to know which output dims have outer loops and which don't.
+    # Outer tile var per output dim:
+    outer_q_var = None; outer_q_factor = 1
+    outer_p_var = None; outer_p_factor = 1
+    outer_m_var = None; outer_m_factor = 1
+
+    outer_loop_specs = []  # [(varname, factor, comment)]
+    for lvl in outer_mem:
+        til = tiling.get(lvl, {})
+        abbr = _level_short(lvl)
+        for dim, fac in til.items():
+            fac = int(fac)
+            vname = f"{dim.lower()}_{abbr}"
+            outer_loop_specs.append((vname, fac, f"{lvl} → {dim}:{fac}"))
+            if dim == "Q": outer_q_var = vname; outer_q_factor = fac
+            if dim == "P": outer_p_var = vname; outer_p_factor = fac
+            if dim == "M": outer_m_var = vname; outer_m_factor = fac
+
+    # ---- Inner sequential loops (WRegister / InRegister) ----
+    inner_loop_specs = []  # [(varname, factor, comment)]
+    inner_r_var = None
+    for lvl in inner_mem:
+        til = tiling.get(lvl, {})
+        for dim, fac in til.items():
+            fac = int(fac)
+            vname = dim.lower()
+            inner_loop_specs.append((vname, fac, f"{lvl} → {dim}:{fac}"))
+            if dim == "R": inner_r_var = vname
+
+    # ---- SARows (unrolled reduction dims: C, S) ----
+    sarows_til = tiling.get("SARows", {}) or {}
+    C_sa = int(sarows_til.get("C", 1))  # SARows C factor (= total C if fully at SARows)
+    S_sa = int(sarows_til.get("S", 1))
+
+    # Verify: total C/S covered by SA + any outer loops
+    # (SARows C) * (outer C if any) should equal total C
+    # For now we assume C/S are fully at SARows (standard Eyeriss).
+
+    # ---- Build code ----
     code = [hdr, sig, "{"]
-
-    code.append("    // SA-shaped Eyeriss CONV (write-only outputs)")
+    code.append("    // SA-shaped Eyeriss CONV -- loop structure mirrors FF mapping hierarchy")
     code.append(f"    const int M={M}, P={P}, Q={Q}, C={C}, R={R}, S={S};")
     code.append(f"    const int H={H}, W={W};")
-    code.append(f"    const int m_sf={bank.m_sf}, p_sf={bank.p_sf}, q_sf={bank.q_sf};")
-    code.append(f"    const int Ptiles={bank.p_tiles}, Qtiles={bank.q_tiles};")
+    code.append(f"    const int m_sf={m_sf}, p_sf={p_sf}, q_sf={q_sf};")
+    code.append(f"    const int Ptiles={Ptiles}, Qtiles={Qtiles};")
+    code.append(f"    const int in_banks={in_banks};")
     code.append("")
 
-    # q_dram = coarse q tile (Q/2)
-    code.append("    // DRAM level: Q tiles (q_sf==2 => Qtiles=Q/2)")
-    code.append("    for (int q_dram = 0; q_dram < Qtiles; ++q_dram) {")
-    code.append("      // GlobalBuffer level: P tiles (p_sf==1 => full P)")
-    code.append("      for (int p = 0; p < P; ++p) {")
+    indent = "    "
 
-    # acc[m_lane][q_lane]
-    code.append("        // SACols: compute M lanes x 2 q-lanes per tile")
-    code.append("        DTYPE acc[4][2];")
-    code.append("        #pragma HLS unroll")
-    code.append("        for (int mi = 0; mi < 4; ++mi) {")
-    code.append("          #pragma HLS unroll")
-    code.append("          for (int qi = 0; qi < 2; ++qi) {")
-    code.append("            acc[mi][qi] = 0.0f;")
-    code.append("          }")
-    code.append("        }")
+    # -- Outer temporal loops --
+    for vname, fac, cmt in outer_loop_specs:
+        code.append(f"{indent}// {cmt}")
+        code.append(f"{indent}for (int {vname} = 0; {vname} < {fac}; ++{vname}) {{")
+        indent += "  "
+
+    # -- Accumulator declaration + init (SACols dims: m_sf, p_sf, q_sf) --
+    code.append(f"{indent}// Accumulator: SACols output lanes acc[m_sf][p_sf][q_sf]")
+    code.append(f"{indent}DTYPE acc[{m_sf}][{p_sf}][{q_sf}];")
+    code.append(f"{indent}#pragma GCC unroll {m_sf}")
+    code.append(f"{indent}for (int mi = 0; mi < {m_sf}; ++mi) {{")
+    code.append(f"{indent}  #pragma GCC unroll {p_sf}")
+    code.append(f"{indent}  for (int pi = 0; pi < {p_sf}; ++pi) {{")
+    code.append(f"{indent}    #pragma GCC unroll {q_sf}")
+    code.append(f"{indent}    for (int qi = 0; qi < {q_sf}; ++qi) {{")
+    code.append(f"{indent}      acc[mi][pi][qi] = 0.0f;")
+    code.append(f"{indent}    }}")
+    code.append(f"{indent}  }}")
+    code.append(f"{indent}}}")
     code.append("")
 
-    # r sequential
-    code.append("        // WRegister: R sequential (this is the best-performing setting you measured)")
-    code.append("        for (int r = 0; r < R; ++r) {")
-    # c unrolled
-    code.append("          #pragma HLS unroll")
-    code.append("          for (int c = 0; c < C; ++c) {")
-    code.append("            int c_bank = c & 1;")
-    code.append("            int c_blk  = c >> 1;")
-    code.append("            int in_c_base  = c_blk * (H * W);")
-    code.append("            int in_row_base = in_c_base + (p + r) * W;")
-    code.append("            int q_base = q_dram * 2;  // global_q = q_base + q_lane")
-    code.append("")
-    # s unrolled
-    code.append("            #pragma HLS unroll")
-    code.append("            for (int s = 0; s < S; ++s) {")
-    code.append("              DTYPE in_q0 = (c_bank==0) ? dram_in_b0[in_row_base + (q_base + 0 + s)]")
-    code.append("                                        : dram_in_b1[in_row_base + (q_base + 0 + s)];")
-    code.append("              DTYPE in_q1 = (c_bank==0) ? dram_in_b0[in_row_base + (q_base + 1 + s)]")
-    code.append("                                        : dram_in_b1[in_row_base + (q_base + 1 + s)];")
-    code.append("")
-    # m_lane unrolled
-    code.append("              #pragma HLS unroll")
-    code.append("              for (int m_lane = 0; m_lane < 4; ++m_lane) {")
-    code.append("                int w_idx = (m_lane * (C/2) + c_blk) * (R * S) + r * S + s;")
-    code.append("                DTYPE wv  = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];")
-    code.append("                acc[m_lane][0] += wv * in_q0;")
-    code.append("                acc[m_lane][1] += wv * in_q1;")
-    code.append("              }")
-    code.append("            }")
-    code.append("          }")
-    code.append("        }")
+    # -- Inner sequential loops (WRegister R) --
+    for vname, fac, cmt in inner_loop_specs:
+        code.append(f"{indent}// {cmt} (sequential)")
+        code.append(f"{indent}for (int {vname} = 0; {vname} < {fac}; ++{vname}) {{")
+        indent += "  "
+
+    r_var = inner_r_var if inner_r_var else "r"
+
+    # -- SARows unrolled: C, S --
+    code.append(f"{indent}// SARows C:{C_sa} -- unrolled reduction (channels)")
+    code.append(f"{indent}#pragma GCC unroll {C_sa}")
+    code.append(f"{indent}for (int c = 0; c < {C_sa}; ++c) {{")
+    code.append(f"{indent}  int c_bank = c & 1;")
+    code.append(f"{indent}  int c_blk  = c >> 1;  // c / in_banks")
+    code.append(f"{indent}  int in_c_base = c_blk * (H * W);")
+
+    # q_base: where this outer q tile starts in the full Q dimension
+    if outer_q_var:
+        code.append(f"{indent}  int q_base = {outer_q_var} * {q_sf};")
+    else:
+        code.append(f"{indent}  int q_base = 0;")
+
+    # p_base: where this outer p tile starts in the full P dimension
+    if outer_p_var:
+        code.append(f"{indent}  // p_sf={p_sf}: p_base covers p_sf output rows per tile")
+        code.append(f"{indent}  // SACols P lanes handled by pl loop below")
     code.append("")
 
-    # Write outputs for this (p,q_dram)
-    code.append("        // OutRegister: write once per output (banked by lane_m and lane_q)")
-    code.append("        for (int m_lane = 0; m_lane < 4; ++m_lane) {")
-    code.append("          int lane_m = m_lane;")
-    code.append("          int cm = 0;            // m_sf==M => cm always 0")
-    code.append("          int cp = p;            // p_sf==1")
-    code.append("          int cq = q_dram;       // q_sf==2")
-    code.append("          int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;")
-    code.append("          int out_bank0 = (lane_m * 1 + 0) * 2 + 0;")
-    code.append("          int out_bank1 = (lane_m * 1 + 0) * 2 + 1;")
-    code.append("          DTYPE v0 = acc[m_lane][0];")
-    code.append("          DTYPE v1 = acc[m_lane][1];")
-    code.append(_emit_out_store_switch_fixed("out_bank0", bank.out_banks, "out_idx_b", "v0", "          "))
-    code.append(_emit_out_store_switch_fixed("out_bank1", bank.out_banks, "out_idx_b", "v1", "          "))
-    code.append("        }")
+    code.append(f"{indent}  // SARows S:{S_sa} -- unrolled (filter cols)")
+    code.append(f"{indent}  #pragma GCC unroll {S_sa}")
+    code.append(f"{indent}  for (int s = 0; s < {S_sa}; ++s) {{")
 
-    code.append("      }")
-    code.append("    }")
+    # -- SACols unrolled: ml (M lane), pl (P lane), ql (Q lane) --
+    code.append(f"{indent}    // SACols M:{m_sf} -- unrolled (output filter lanes)")
+    code.append(f"{indent}    #pragma GCC unroll {m_sf}")
+    code.append(f"{indent}    for (int ml = 0; ml < {m_sf}; ++ml) {{")
+
+    # m_total for weight index
+    if outer_m_var:
+        m_total_expr = f"({outer_m_var} * {m_sf} + ml)"
+    else:
+        m_total_expr = "ml"
+
+    code.append(f"{indent}      int w_idx = ({m_total_expr} * (C / in_banks) + c_blk) * (R * S) + {r_var} * S + s;")
+    code.append(f"{indent}      DTYPE wv = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];")
+    code.append("")
+
+    code.append(f"{indent}      // SACols P:{p_sf} -- unrolled (output row lanes)")
+    code.append(f"{indent}      #pragma GCC unroll {p_sf}")
+    code.append(f"{indent}      for (int pl = 0; pl < {p_sf}; ++pl) {{")
+
+    if outer_p_var:
+        p_row_expr = f"({outer_p_var} * {p_sf} + pl + {r_var})"
+    else:
+        p_row_expr = f"(pl + {r_var})"
+
+    code.append(f"{indent}        int in_row_base = in_c_base + {p_row_expr} * W;")
+    code.append("")
+
+    code.append(f"{indent}        // SACols Q:{q_sf} -- unrolled (output col lanes)")
+    code.append(f"{indent}        #pragma GCC unroll {q_sf}")
+    code.append(f"{indent}        for (int ql = 0; ql < {q_sf}; ++ql) {{")
+    code.append(f"{indent}          int in_col = q_base + ql + s;")
+    code.append(f"{indent}          DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]")
+    code.append(f"{indent}                                  : dram_in_b1[in_row_base + in_col];")
+    code.append(f"{indent}          acc[ml][pl][ql] += wv * inv;")
+    code.append(f"{indent}        }}  // ql")
+    code.append(f"{indent}      }}  // pl")
+    code.append(f"{indent}    }}  // ml")
+    code.append(f"{indent}  }}  // s")
+    code.append(f"{indent}}}  // c")
+    code.append("")
+
+    # Close inner sequential loops
+    for _ in inner_loop_specs:
+        indent = indent[:-2]
+        code.append(f"{indent}}}  // inner seq")
+    code.append("")
+
+    # -- Output write: loop over ml, pl, ql and write acc to banked ports --
+    code.append(f"{indent}// OutRegister: write acc to banked output ports")
+    code.append(f"{indent}#pragma GCC unroll {m_sf}")
+    code.append(f"{indent}for (int ml = 0; ml < {m_sf}; ++ml) {{")
+    code.append(f"{indent}  #pragma GCC unroll {p_sf}")
+    code.append(f"{indent}  for (int pl = 0; pl < {p_sf}; ++pl) {{")
+    code.append(f"{indent}    #pragma GCC unroll {q_sf}")
+    code.append(f"{indent}    for (int ql = 0; ql < {q_sf}; ++ql) {{")
+    code.append(f"{indent}      int out_bank = (ml * {p_sf} + pl) * {q_sf} + ql;")
+
+    # Tile indices for output array
+    cm_expr = f"{outer_m_var}" if outer_m_var else "0"
+    if outer_p_var:
+        cp_expr = f"{outer_p_var}"
+    else:
+        # No outer P loop: p_sf > 1 tiles are covered inside (pl is the only p index)
+        # But without an outer p loop, each pl maps to a different output element.
+        # This case requires careful thought -- for now use pl directly as cp
+        cp_expr = "pl"
+    cq_expr = f"{outer_q_var}" if outer_q_var else "0"
+
+    code.append(f"{indent}      int cm = {cm_expr};")
+    code.append(f"{indent}      int cp = {cp_expr};")
+    code.append(f"{indent}      int cq = {cq_expr};")
+    code.append(f"{indent}      int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;")
+    code.append(f"{indent}      DTYPE v = acc[ml][pl][ql];")
+    code.append(_emit_out_store_switch_fixed("out_bank", bank.out_banks,
+                                             "out_idx_b", "v", f"{indent}      "))
+    code.append(f"{indent}    }}  // ql")
+    code.append(f"{indent}  }}  // pl")
+    code.append(f"{indent}}}  // ml")
+
+    # Close outer temporal loops
+    for _ in outer_loop_specs:
+        indent = indent[:-2]
+        code.append(f"{indent}}}  // outer")
 
     code.append("}")
     code.append("")

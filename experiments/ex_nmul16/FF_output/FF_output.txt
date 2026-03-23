@@ -60,11 +60,11 @@ WRegister -----> R: 3
 OutRegister ---
 Compute -------
 
-Visited mappings: 394
+Visited mappings: 388
 
 Performed moves: 6
 
-Finished in: 0.457s
+Finished in: 0.385s
 
 Best mapping found with:
 	Wart: 9.673e-04

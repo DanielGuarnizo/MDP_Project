@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(gcc -O2 -o cpu_sa top_level_sa.c testbench_common.c -lm)",
+      "Bash(./cpu_sa)",
+      "Bash(gcc -O2 -o cpu_seq top_level_seq.c testbench_common.c -lm)",
+      "Bash(./cpu_seq)",
+      "Bash(gh --version)",
+      "Read(//usr/bin/**)",
+      "Bash(command -v github)",
+      "Bash(git remote:*)",
+      "Bash(pip show:*)"
+    ]
+  }
+}

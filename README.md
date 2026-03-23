@@ -6,10 +6,7 @@ python ./FactorFlow/main_cli.py eyeriss 8 8 8 > ./output/FF_output.txt
 
 python ./FactorFlow/main_cli.py eyeriss-conv 8 8 8 8 3 3 > ./output/FF_output.txt
 
-python src/generator.py
+python src/main.py --config experiments/ex2/config.json
 
-gcc -o test_cpu generated_for_cpu.c -lm -O2
-
-./test_cpu
-
-./compile_bambu.sh
+./path/to/exN/run_compare.sh
+./path/to/exN/compile_bambu.sh

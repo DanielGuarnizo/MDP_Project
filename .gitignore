@@ -3,3 +3,4 @@ PandA-bambu/
 venv/
 *.xml
 papers/
+**/HLS_output/
