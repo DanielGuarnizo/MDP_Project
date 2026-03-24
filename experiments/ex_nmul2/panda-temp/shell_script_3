@@ -1,4 +1,0 @@
-#!/bin/bash
-ulimit -s 131072
-(/usr/bin/cpp-8 -v  < /dev/null 2>&1 | sed -n '/#include </,/> search ends here:/p' | grep -v -E "(#|End of search list.|COMPILER_PATH|LIBRARY_PATH|COLLECT_GCC|OFFLOAD_TARGET_NAMES|OFFLOAD_TARGET_DEFAULT)" | sed 's/ //')  2>&1 | tee "panda-temp/__include"
-exit ${PIPESTATUS[0]}

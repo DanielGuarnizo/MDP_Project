@@ -16,19 +16,20 @@ The goal is to show that SA-shaped code (loop structure mirrors the FF spatial h
 
 **Generate files for an experiment:**
 ```bash
-python src/main.py --config experiments/ex2/config.json
+python src/main.py --config experiments/eyeriss/conv/ex1/config.json
+python src/main.py --config experiments/eyeriss/gemm/ex1/config.json
 ```
 
 **CPU correctness check (fast, no Bambu):**
 ```bash
-cd experiments/ex2
+cd experiments/eyeriss/conv/ex1
 gcc -O2 -o cpu_sa top_level_sa.c testbench_common.c -lm && ./cpu_sa
 gcc -O2 -o cpu_seq top_level_seq.c testbench_common.c -lm && ./cpu_seq
 ```
 
 **Bambu co-simulation + cycle count (slow):**
 ```bash
-cd experiments/ex2
+cd experiments/eyeriss/conv/ex1
 ./run_compare.sh              # default N_mul (from config, or 1 if unset)
 ./run_compare.sh 2            # override N_mul=2  (-C=__float_mul=2)
 ./run_compare.sh 4            # override N_mul=4
@@ -36,13 +37,13 @@ cd experiments/ex2
 ./compile_bambu.sh top_level_seq.c 4   # compile SEQ with N_mul=4
 ```
 
-`experiments/ex_nmul{2,4,8,16}/` are redundant — use `./run_compare.sh N` from ex2 instead.
-
 **Analytical cycle model (no Bambu needed):**
 ```bash
-python src/model.py --ff experiments/ex2/FF_output/FF_output.txt --n-mul 1 2 4 8 16
+python src/model.py --ff experiments/eyeriss/conv/ex1/FF_output/FF_output.txt --n-mul 1 2 4 8 16
 # Two-point calibration (serial + parallel regime):
-python src/model.py --ff experiments/ex2/FF_output/FF_output.txt --measured 1:23660 2:4148
+python src/model.py --ff experiments/eyeriss/conv/ex1/FF_output/FF_output.txt --measured 1:23660 2:4148
+# GEMM:
+python src/model.py --ff experiments/eyeriss/gemm/ex1/FF_output/FF_output.txt --n-mul 1 2 4 8 16
 ```
 
 **Run FactorFlow directly:**
@@ -108,7 +109,15 @@ Key quantities:
 
 ## Experiment layout
 
-Each `experiments/exN/` is self-contained:
+Experiments are organized by architecture and workload:
+```
+experiments/
+  eyeriss/
+    conv/ex1/        # eyeriss-conv reference experiment
+    gemm/ex1/        # eyeriss-gemm reference experiment
+```
+
+Each experiment folder is self-contained:
 ```
 config.json          # factorflow args + bambu settings
 FF_output/FF_output.txt   # FactorFlow output (reused if force:false)
@@ -121,10 +130,8 @@ Bambu_outputs/seq/   # Bambu artifacts + log for seq
 Bambu_outputs/sa/    # Bambu artifacts + log for sa
 ```
 
-`experiments/ex_nmul{2,4,8,16}/` are sweeps of `-C=__float_mul=N` for model validation.
-
 ## Currently supported
 
-- **Eyeriss-CONV** only (end-to-end, correct, cycle-compared).
-- GEMM and other architectures: dispatcher raises `NotImplementedError` — placeholders exist.
+- **Eyeriss-CONV** and **Eyeriss-GEMM** (end-to-end, correct, cycle-compared).
+- Other architectures: dispatcher raises `NotImplementedError` — placeholders exist.
 - FactorFlow expected at `FactorFlow/main_cli.py` (repo root). Configurable via `config.factorflow.main_cli`.

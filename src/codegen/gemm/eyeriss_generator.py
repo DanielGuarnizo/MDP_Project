@@ -225,7 +225,7 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: GemmBankSpec) -> str:
         return s.get(lvl, lvl.lower()[:3])
 
     # Collect outer temporal loop specs
-    outer_n_var: str | None = None
+    outer_n_vars: list[tuple[str, int]] = []  # (varname, factor) outermost→innermost
     outer_m_var: str | None = None
     outer_k_var: str | None = None
     outer_loop_specs: list[tuple[str, int, str]] = []
@@ -237,9 +237,14 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: GemmBankSpec) -> str:
             fac   = int(fac)
             vname = f"{dim.lower()}_{abbr}"
             outer_loop_specs.append((vname, fac, f"{lvl} → {dim}:{fac}"))
-            if dim == "N": outer_n_var = vname
+            if dim == "N": outer_n_vars.append((vname, fac))
             if dim == "M": outer_m_var = vname
             if dim == "K": outer_k_var = vname
+
+    # If M_tiles > 1 and no outer memory level provided M tiling, emit a synthetic loop
+    if M_tiles > 1 and outer_m_var is None:
+        outer_m_var = "m_tile"
+        outer_loop_specs.insert(0, ("m_tile", M_tiles, "M tile (synthetic outer loop)"))
 
     # Inner sequential loops (InRegister / WRegister — usually empty for GEMM)
     inner_loop_specs: list[tuple[str, int, str]] = []
@@ -273,13 +278,27 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: GemmBankSpec) -> str:
     code.append("")
 
     # Inner sequential loops (usually none)
+    inner_k_var: str | None = None
     for vname, fac, cmt in inner_loop_specs:
         code.append(f"{indent}// {cmt} (sequential)")
         code.append(f"{indent}for (int {vname} = 0; {vname} < {fac}; ++{vname}) {{")
         indent += "  "
+        if vname == "k":
+            inner_k_var = vname
 
-    # N index expression (always from outer loop — N is never in SA for GEMM)
-    n_global_expr = outer_n_var if outer_n_var else "0"
+    # N index expression: combine all outer N loop variables with proper strides
+    if not outer_n_vars:
+        n_global_expr = "0"
+    elif len(outer_n_vars) == 1:
+        n_global_expr = outer_n_vars[0][0]
+    else:
+        parts = []
+        for i, (vname, _) in enumerate(outer_n_vars):
+            stride = 1
+            for _, f in outer_n_vars[i + 1:]:
+                stride *= f
+            parts.append(f"{vname} * {stride}" if stride > 1 else vname)
+        n_global_expr = " + ".join(parts)
 
     # SA unrolled body: SARows(m_sarows) × SACols(m_sacols, k_sa)
     code.append(f"{indent}// SARows M:{m_sarows} × SACols M:{m_sacols} × SACols K:{k_sa} — unrolled")
@@ -296,6 +315,8 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: GemmBankSpec) -> str:
     code.append(f"{indent}    for (int kci = 0; kci < {k_sa}; ++kci) {{")
     if outer_k_var:
         code.append(f"{indent}      int k_global = {outer_k_var} * {k_sa} + kci;")
+    elif inner_k_var:
+        code.append(f"{indent}      int k_global = {inner_k_var} * {k_sa} + kci;")
     else:
         code.append(f"{indent}      int k_global = kci;")
     code.append(f"{indent}      int k_bank = k_global & 1;")

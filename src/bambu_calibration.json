@@ -3,5 +3,17 @@
     "alpha_s": 13.6921,
     "alpha_p": 7.2014,
     "source": "measured ex2 eyeriss-conv N_mul=1:23660 N_mul=2:4148"
+  },
+  "eyeriss__I386_GCC8__5": {
+    "alpha_s": 3.5125,
+    "alpha_p": 8.7812,
+    "source": "auto-calibrated eyeriss N_mul=1:281 N_mul=2:281 N_mul=4:281 N_mul=8:281 N_mul=16:281",
+    "measured_cycles": {
+      "1": 281,
+      "2": 281,
+      "4": 281,
+      "8": 281,
+      "16": 281
+    }
   }
 }

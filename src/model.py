@@ -125,13 +125,13 @@ def _run_bambu_calibration(tmp: Path, compiler: str, clock_period: int,
     tb_flags = re.findall(r"--tb-param-size=\S+", compile_sh.read_text())
 
     cmd = [
-        "bambu", "../../top_level_sa.c",
+        "bambu", "../top_level_sa.c",
         "--top-fname=top_level",
         "--generate-interface=INFER",
         f"--compiler={compiler}",
         f"--clock-period={clock_period}",
         "-O3", "-v4",
-        "--generate-tb=../../testbench_common.c",
+        "--generate-tb=../testbench_common.c",
     ] + tb_flags + [f"-C=__float_mul={n_mul}", "--simulate"]
 
     log_path = out_dir / f"bambu_n{n_mul}.log"
@@ -448,7 +448,7 @@ def main():
     ap = argparse.ArgumentParser(
         description="Predict Bambu cycle counts for SA-shaped conv kernels.")
     ap.add_argument("--ff", required=True,
-                    help="Path to FF_output.txt")
+                    help="Path to FF_output.txt or experiment directory")
     ap.add_argument("--n-mul", type=int, nargs="+", default=[1, 2, 4, 8, 16],
                     help="Float multiplier counts to evaluate (powers of 2, default: 1 2 4 8 16)")
     ap.add_argument("--measured", nargs="*", metavar="N_MUL:CYCLES",
@@ -459,7 +459,10 @@ def main():
                     help="Bambu clock period in ns (default: 5)")
     args = ap.parse_args()
 
-    mapping = parse_ff_output(args.ff)
+    ff_path = Path(args.ff)
+    if ff_path.is_dir():
+        ff_path = ff_path / "FF_output" / "FF_output.txt"
+    mapping = parse_ff_output(str(ff_path))
     model = BambuCycleModel(mapping)
     measured = _parse_measured(args)
 

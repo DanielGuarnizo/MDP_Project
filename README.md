@@ -16,10 +16,10 @@ fewer Bambu clock cycles than a sequential baseline.
 
 ```bash
 # 1. Generate all files for an experiment (runs FF if needed, then code generation)
-python src/main.py --config experiments/ex2/config.json
+python src/main.py --config experiments/eyeriss/conv/ex1/config.json
 
 # 2. CPU correctness check (fast, no Bambu)
-cd experiments/ex2
+cd experiments/eyeriss/conv/ex1
 gcc -O2 -o cpu_sa  top_level_sa.c  testbench_common.c -lm && ./cpu_sa
 gcc -O2 -o cpu_seq top_level_seq.c testbench_common.c -lm && ./cpu_seq
 
@@ -28,7 +28,7 @@ gcc -O2 -o cpu_seq top_level_seq.c testbench_common.c -lm && ./cpu_seq
 ./run_compare.sh 4        # override N_mul=4 (-C=__float_mul=4)
 
 # 4. Analytical cycle model (no Bambu needed)
-python src/model.py --ff experiments/ex2/FF_output/FF_output.txt --n-mul 1 2 4 8 16
+python src/model.py --ff experiments/eyeriss/conv/ex1/FF_output/FF_output.txt --n-mul 1 2 4 8 16
 
 # 5. Run FactorFlow directly
 python FactorFlow/main_cli.py eyeriss-conv 4 4 4 4 3 3   # M P Q C R S
@@ -68,7 +68,16 @@ config.json
                     └─ compile_bambu.sh + run_compare.sh
 ```
 
-Each `experiments/exN/` is self-contained:
+Experiments are organized by architecture and workload:
+
+```
+experiments/
+  eyeriss/
+    conv/ex1/        # eyeriss-conv reference
+    gemm/ex1/        # eyeriss-gemm reference
+```
+
+Each experiment folder is self-contained:
 
 ```
 config.json              # factorflow args + bambu settings
