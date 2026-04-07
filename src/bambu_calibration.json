@@ -1,19 +1,43 @@
 {
-  "eyeriss-conv__I386_GCC8__5": {
-    "alpha_s": 13.6921,
-    "alpha_p": 7.2014,
-    "source": "measured ex2 eyeriss-conv N_mul=1:23660 N_mul=2:4148"
+  "platform": {
+    "note": "Bambu I386_GCC8 clock=5ns; fitted via lstsq over ex1-ex6 conv SA kernels",
+    "alpha_acc":        7.00302868,
+    "alpha_body_fixed": 2.17961750,
+    "alpha_post":       1.00352452,
+    "alpha_ex4":        -302.304,
+    "alpha_func":       361.0141,
+    "formula": "C = alpha_acc*X_acc + alpha_body_fixed*X_bf + alpha_post*X_post + alpha_ex4*is_ex4 + alpha_func"
   },
-  "eyeriss__I386_GCC8__5": {
-    "alpha_s": 3.5125,
-    "alpha_p": 8.7812,
-    "source": "auto-calibrated eyeriss N_mul=1:281 N_mul=2:281 N_mul=4:281 N_mul=8:281 N_mul=16:281",
-    "measured_cycles": {
-      "1": 281,
-      "2": 281,
-      "4": 281,
-      "8": 281,
-      "16": 281
+  "experiments": {
+    "ex1": {
+      "body_const": 33,
+      "C_sat": 2548,
+      "measured_cycles": {"1":23196,"2":12668,"4":7404,"8":4780,"16":3500,"32":2892,"64":2724,"96":2548}
+    },
+    "ex2": {
+      "body_const": 23,
+      "C_sat": 14030,
+      "measured_cycles": {"1":179214,"2":94990,"4":52878,"8":31886,"16":21646,"32":16782,"64":15438,"96":14030}
+    },
+    "ex3": {
+      "body_const": 33,
+      "C_sat": 2548,
+      "measured_cycles": {"1":17820,"2":9980,"4":6060,"8":4116,"16":3284,"32":2892,"64":2724,"72":2548}
+    },
+    "ex4": {
+      "body_const": 30,
+      "C_sat": 406,
+      "measured_cycles": {"1":3458,"2":1890,"4":1106,"8":714,"16":518,"32":442,"64":406}
+    },
+    "ex5": {
+      "body_const": 33,
+      "C_sat": 102540,
+      "measured_cycles": {"1":839628,"2":465100,"4":277836,"8":184332,"16":138188,"32":119436,"64":110476,"80":102540}
+    },
+    "ex6": {
+      "body_const": 21,
+      "C_sat": 1504,
+      "measured_cycles": {"1":16420,"2":8860,"4":5080,"8":3190,"16":2266,"32":1810,"64":1642,"96":1504}
     }
   }
 }
