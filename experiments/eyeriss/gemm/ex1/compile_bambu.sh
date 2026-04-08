@@ -8,7 +8,7 @@ N_MUL="${2:-$N_MUL_DEFAULT}"
 
 FLOAT_MUL_FLAG=""
 if [[ -n "$N_MUL" ]]; then
-  FLOAT_MUL_FLAG="-C=__float_mul=$N_MUL"
+  FLOAT_MUL_FLAG="-C=__float_mule8m23b_127nih=$N_MUL"
 fi
 
 bambu "$TOP" \

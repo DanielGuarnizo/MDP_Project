@@ -1,0 +1,280 @@
+
+============================================================
+[CPU] correctness for top_level_seq.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[CPU] correctness for top_level_sa.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[BAMBU] cycles (seq)
+============================================================
+seq cycles: 1089932
+
+============================================================
+[BAMBU] cycles (sa)
+============================================================
+sa cycles: 835468
+
+==================== SUMMARY ====================
+seq cycles: 1089932
+ sa cycles: 835468
+=================================================
+Logs:
+  Bambu_outputs/seq/n1/bambu_seq_n1.log
+  Bambu_outputs/sa/n1/bambu_sa_n1.log
+Bambu outputs:
+  Bambu_outputs/seq/n1
+  Bambu_outputs/sa/n1
+
+============================================================
+[CPU] correctness for top_level_seq.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[CPU] correctness for top_level_sa.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[BAMBU] cycles (seq)
+============================================================
+seq cycles: 803212
+
+============================================================
+[BAMBU] cycles (sa)
+============================================================
+sa cycles: 486028
+
+==================== SUMMARY ====================
+seq cycles: 803212
+ sa cycles: 486028
+=================================================
+Logs:
+  Bambu_outputs/seq/n2/bambu_seq_n2.log
+  Bambu_outputs/sa/n2/bambu_sa_n2.log
+Bambu outputs:
+  Bambu_outputs/seq/n2
+  Bambu_outputs/sa/n2
+
+============================================================
+[CPU] correctness for top_level_seq.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[CPU] correctness for top_level_sa.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[BAMBU] cycles (seq)
+============================================================
+seq cycles: 624012
+
+============================================================
+[BAMBU] cycles (sa)
+============================================================
+sa cycles: 315788
+
+==================== SUMMARY ====================
+seq cycles: 624012
+ sa cycles: 315788
+=================================================
+Logs:
+  Bambu_outputs/seq/n4/bambu_seq_n4.log
+  Bambu_outputs/sa/n4/bambu_sa_n4.log
+Bambu outputs:
+  Bambu_outputs/seq/n4
+  Bambu_outputs/sa/n4
+
+============================================================
+[CPU] correctness for top_level_seq.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[CPU] correctness for top_level_sa.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[BAMBU] cycles (seq)
+============================================================
+seq cycles: 547212
+
+============================================================
+[BAMBU] cycles (sa)
+============================================================
+sa cycles: 226188
+
+==================== SUMMARY ====================
+seq cycles: 547212
+ sa cycles: 226188
+=================================================
+Logs:
+  Bambu_outputs/seq/n8/bambu_seq_n8.log
+  Bambu_outputs/sa/n8/bambu_sa_n8.log
+Bambu outputs:
+  Bambu_outputs/seq/n8
+  Bambu_outputs/sa/n8
+
+============================================================
+[CPU] correctness for top_level_seq.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[CPU] correctness for top_level_sa.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[BAMBU] cycles (seq)
+============================================================
+seq cycles: 547212
+
+============================================================
+[BAMBU] cycles (sa)
+============================================================
+sa cycles: 181388
+
+==================== SUMMARY ====================
+seq cycles: 547212
+ sa cycles: 181388
+=================================================
+Logs:
+  Bambu_outputs/seq/n16/bambu_seq_n16.log
+  Bambu_outputs/sa/n16/bambu_sa_n16.log
+Bambu outputs:
+  Bambu_outputs/seq/n16
+  Bambu_outputs/sa/n16
+
+============================================================
+[CPU] correctness for top_level_seq.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[CPU] correctness for top_level_sa.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[BAMBU] cycles (seq)
+============================================================
+seq cycles: 547212
+
+============================================================
+[BAMBU] cycles (sa)
+============================================================
+sa cycles: 181388
+
+==================== SUMMARY ====================
+seq cycles: 547212
+ sa cycles: 181388
+=================================================
+Logs:
+  Bambu_outputs/seq/n32/bambu_seq_n32.log
+  Bambu_outputs/sa/n32/bambu_sa_n32.log
+Bambu outputs:
+  Bambu_outputs/seq/n32
+  Bambu_outputs/sa/n32
+
+============================================================
+[CPU] correctness for top_level_seq.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[CPU] correctness for top_level_sa.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[BAMBU] cycles (seq)
+============================================================
+seq cycles: 524172
+
+============================================================
+[BAMBU] cycles (sa)
+============================================================
+sa cycles: 180108
+
+==================== SUMMARY ====================
+seq cycles: 524172
+ sa cycles: 180108
+=================================================
+Logs:
+  Bambu_outputs/seq/n64/bambu_seq_n64.log
+  Bambu_outputs/sa/n64/bambu_sa_n64.log
+Bambu outputs:
+  Bambu_outputs/seq/n64
+  Bambu_outputs/sa/n64
+
+============================================================
+[CPU] correctness for top_level_seq.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[CPU] correctness for top_level_sa.c
+============================================================
+Running HLS top_level function...
+Comparing results...
+SUCCESS: The results match the golden reference!
+
+============================================================
+[BAMBU] cycles (seq)
+============================================================
+seq cycles: 524172
+
+============================================================
+[BAMBU] cycles (sa)
+============================================================
+sa cycles: 180108
+
+==================== SUMMARY ====================
+seq cycles: 524172
+ sa cycles: 180108
+=================================================
+Logs:
+  Bambu_outputs/seq/n80/bambu_seq_n80.log
+  Bambu_outputs/sa/n80/bambu_sa_n80.log
+Bambu outputs:
+  Bambu_outputs/seq/n80
+  Bambu_outputs/sa/n80

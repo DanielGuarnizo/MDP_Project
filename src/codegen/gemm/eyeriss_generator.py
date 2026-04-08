@@ -161,48 +161,16 @@ def _out_store_switch(bank_expr: str, out_banks: int,
 # =========================
 
 def _emit_top_level_seq(mapping: MappingInfo, bank: GemmBankSpec) -> str:
-    d = mapping.dims
-    M = int(d["M"]); K = int(d["K"]); N = int(d["N"])
-    m_sf    = bank.m_sf
-    k_blks  = bank.k_blks
-    M_tiles = bank.M_tiles
-
-    hdr = _headers_and_pragmas(mapping, bank)
-    sig = _top_signature(bank)
-
-    code = [hdr, sig, "{"]
-    code.append("    // Sequential GEMM baseline (banked I/O, write-only outputs)")
-    code.append(f"    const int M={M}, K={K}, N={N};")
-    code.append(f"    const int m_sf={m_sf}, k_blks={k_blks}, M_tiles={M_tiles};")
-    code.append("")
-    code.append("    for (int m = 0; m < M; ++m) {")
-    code.append("      for (int n = 0; n < N; ++n) {")
-    code.append("        DTYPE acc = 0.0f;")
-    code.append("        for (int k = 0; k < K; ++k) {")
-    code.append("          int k_bank = k & 1;")
-    code.append("          int k_blk  = k >> 1;")
-    code.append("          DTYPE wv = (k_bank==0) ? dram_w_b0[m * k_blks + k_blk]")
-    code.append("                                 : dram_w_b1[m * k_blks + k_blk];")
-    code.append("          DTYPE iv = (k_bank==0) ? dram_in_b0[k_blk * N + n]")
-    code.append("                                 : dram_in_b1[k_blk * N + n];")
-    code.append("          acc += wv * iv;")
-    code.append("        }")
-    code.append("        int out_bank = m % m_sf;")
-    code.append("        int m_tile   = m / m_sf;")
-    code.append("        int out_idx  = m_tile * N + n;")
-    code.append(_out_store_switch("out_bank", bank.out_banks, "out_idx", "acc", "        "))
-    code.append("      }")
-    code.append("    }")
-    code.append("}")
-    code.append("")
-    return "\n".join(code)
+    """Sequential baseline: same loop structure as SA but all-nounroll, no weight preload."""
+    return _emit_top_level_sa(mapping, bank, unroll=False)
 
 
 # =========================
 # top_level_sa.c
 # =========================
 
-def _emit_top_level_sa(mapping: MappingInfo, bank: GemmBankSpec) -> str:
+def _emit_top_level_sa(mapping: MappingInfo, bank: GemmBankSpec,
+                        unroll: bool = True) -> str:
     from codegen.conv.eyeriss_generator import _classify_levels  # reuse level classifier
 
     d = mapping.dims
@@ -246,7 +214,7 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: GemmBankSpec) -> str:
         outer_m_var = "m_tile"
         outer_loop_specs.insert(0, ("m_tile", M_tiles, "M tile (synthetic outer loop)"))
 
-    # Inner sequential loops (InRegister / WRegister — usually empty for GEMM)
+    # Inner sequential loops (InRegister / WRegister — usually K tiling)
     inner_loop_specs: list[tuple[str, int, str]] = []
     for lvl in inner_mem:
         til = tiling.get(lvl, {})
@@ -254,37 +222,6 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: GemmBankSpec) -> str:
             fac   = int(fac)
             vname = dim.lower()
             inner_loop_specs.append((vname, fac, f"{lvl} → {dim}:{fac}"))
-
-    code = [hdr, sig, "{"]
-    code.append("    // SA-shaped Eyeriss GEMM -- loop structure mirrors FF mapping hierarchy")
-    code.append(f"    const int M={M}, K={K}, N={N};")
-    code.append(f"    const int m_sf={m_sf}, m_sacols={m_sacols}, m_sarows={m_sarows};")
-    code.append(f"    const int k_sa={k_sa}, k_blks={k_blks}, M_tiles={M_tiles};")
-    code.append("")
-
-    indent = "    "
-
-    # Outer temporal loops
-    for vname, fac, cmt in outer_loop_specs:
-        code.append(f"{indent}// {cmt}")
-        code.append(f"{indent}for (int {vname} = 0; {vname} < {fac}; ++{vname}) {{")
-        indent += "  "
-
-    # Accumulator: acc[m_sf] (one scalar per M lane)
-    code.append(f"{indent}// Accumulator: one element per M lane (N handled by outer loop)")
-    code.append(f"{indent}DTYPE acc[{m_sf}];")
-    code.append(f"{indent}#pragma GCC unroll {m_sf}")
-    code.append(f"{indent}for (int mi = 0; mi < {m_sf}; ++mi) acc[mi] = 0.0f;")
-    code.append("")
-
-    # Inner sequential loops (usually none)
-    inner_k_var: str | None = None
-    for vname, fac, cmt in inner_loop_specs:
-        code.append(f"{indent}// {cmt} (sequential)")
-        code.append(f"{indent}for (int {vname} = 0; {vname} < {fac}; ++{vname}) {{")
-        indent += "  "
-        if vname == "k":
-            inner_k_var = vname
 
     # N index expression: combine all outer N loop variables with proper strides
     if not outer_n_vars:
@@ -300,29 +237,100 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: GemmBankSpec) -> str:
             parts.append(f"{vname} * {stride}" if stride > 1 else vname)
         n_global_expr = " + ".join(parts)
 
-    # SA unrolled body: SARows(m_sarows) × SACols(m_sacols, k_sa)
-    code.append(f"{indent}// SARows M:{m_sarows} × SACols M:{m_sacols} × SACols K:{k_sa} — unrolled")
-    code.append(f"{indent}#pragma GCC unroll {m_sarows}")
+    kind = "SA (weight-preload)" if unroll else "sequential baseline"
+    code = [hdr, sig, "{"]
+    code.append(f"    // {kind} Eyeriss GEMM -- loop structure mirrors FF mapping hierarchy")
+    code.append(f"    const int M={M}, K={K}, N={N};")
+    code.append(f"    const int m_sf={m_sf}, m_sacols={m_sacols}, m_sarows={m_sarows};")
+    code.append(f"    const int k_sa={k_sa}, k_blks={k_blks}, M_tiles={M_tiles};")
+    code.append("")
+
+    # Flat accumulator at function scope → GCC SROA → m_sf scalar regs
+    code.append(f"    // Accumulator: flat 1D at function scope → GCC SROA → {m_sf} scalar regs")
+    code.append(f"    DTYPE acc[{m_sf}];")
+    code.append("")
+
+    indent = "    "
+
+    # Outer temporal loops — all nounroll
+    for vname, fac, cmt in outer_loop_specs:
+        code.append(f"{indent}// {cmt}")
+        code.append(f"{indent}#pragma GCC nounroll")
+        code.append(f"{indent}for (int {vname} = 0; {vname} < {fac}; ++{vname}) {{")
+        indent += "  "
+
+    # Zero accumulator (nounroll — non-spatial init)
+    code.append(f"{indent}// Zero accumulator (nounroll — non-spatial init)")
+    code.append(f"{indent}#pragma GCC nounroll")
+    code.append(f"{indent}for (int mi = 0; mi < {m_sf}; ++mi) acc[mi] = 0.0f;")
+    code.append("")
+
+    # Inner sequential loops — all nounroll
+    inner_k_var: str | None = None
+    for vname, fac, cmt in inner_loop_specs:
+        code.append(f"{indent}// {cmt} (sequential)")
+        code.append(f"{indent}#pragma GCC nounroll")
+        code.append(f"{indent}for (int {vname} = 0; {vname} < {fac}; ++{vname}) {{")
+        indent += "  "
+        if vname == "k":
+            inner_k_var = vname
+
+    def _k_global_expr(kci_var: str) -> str:
+        if outer_k_var:
+            return f"{outer_k_var} * {k_sa} + {kci_var}"
+        elif inner_k_var:
+            return f"{inner_k_var} * {k_sa} + {kci_var}"
+        else:
+            return kci_var
+
+    m_tile_expr = outer_m_var if outer_m_var else "0"
+    p = "#pragma GCC unroll" if unroll else "#pragma GCC nounroll"
+
+    if unroll:
+        # ---- Phase 1: preload A (weights) into local regs ----
+        code.append(f"{indent}// ---- Phase 1: preload A weights for this k-tile ----")
+        code.append(f"{indent}// w_tile[{m_sarows}][{m_sacols}][{k_sa}] → GCC SROA → {m_sarows*m_sacols*k_sa} scalar regs")
+        code.append(f"{indent}DTYPE w_tile[{m_sarows}][{m_sacols}][{k_sa}];")
+        code.append(f"{indent}#pragma GCC unroll {m_sarows}")
+        code.append(f"{indent}for (int mri = 0; mri < {m_sarows}; ++mri) {{")
+        code.append(f"{indent}  #pragma GCC unroll {m_sacols}")
+        code.append(f"{indent}  for (int mci = 0; mci < {m_sacols}; ++mci) {{")
+        code.append(f"{indent}    int m_global = {m_tile_expr} * {m_sf} + mri * {m_sacols} + mci;")
+        code.append(f"{indent}    #pragma GCC unroll {k_sa}")
+        code.append(f"{indent}    for (int kci = 0; kci < {k_sa}; ++kci) {{")
+        code.append(f"{indent}      int k_global = {_k_global_expr('kci')};")
+        code.append(f"{indent}      int k_bank = k_global & 1;")
+        code.append(f"{indent}      int k_blk  = k_global >> 1;")
+        code.append(f"{indent}      w_tile[mri][mci][kci] = (k_bank==0) ? dram_w_b0[m_global * k_blks + k_blk]")
+        code.append(f"{indent}                                           : dram_w_b1[m_global * k_blks + k_blk];")
+        code.append(f"{indent}    }}")
+        code.append(f"{indent}  }}")
+        code.append(f"{indent}}}")
+        code.append("")
+        code.append(f"{indent}// ---- Phase 2: compute using local w_tile + AXI B reads only ----")
+
+    # Compute body (Phase 2 for SA, single-phase for seq)
+    code.append(f"{indent}// SARows M:{m_sarows} × SACols M:{m_sacols} × SACols K:{k_sa}")
+    code.append(f"{indent}{p} {m_sarows}")
     code.append(f"{indent}for (int mri = 0; mri < {m_sarows}; ++mri) {{")
-    code.append(f"{indent}  #pragma GCC unroll {m_sacols}")
+    code.append(f"{indent}  {p} {m_sacols}")
     code.append(f"{indent}  for (int mci = 0; mci < {m_sacols}; ++mci) {{")
     code.append(f"{indent}    int acc_m = mri * {m_sacols} + mci;")
-    if outer_m_var:
-        code.append(f"{indent}    int m_global = {outer_m_var} * {m_sf} + acc_m;")
-    else:
-        code.append(f"{indent}    int m_global = acc_m;")
-    code.append(f"{indent}    #pragma GCC unroll {k_sa}")
+    if not unroll:
+        if outer_m_var:
+            code.append(f"{indent}    int m_global = {m_tile_expr} * {m_sf} + acc_m;")
+        else:
+            code.append(f"{indent}    int m_global = acc_m;")
+    code.append(f"{indent}    {p} {k_sa}")
     code.append(f"{indent}    for (int kci = 0; kci < {k_sa}; ++kci) {{")
-    if outer_k_var:
-        code.append(f"{indent}      int k_global = {outer_k_var} * {k_sa} + kci;")
-    elif inner_k_var:
-        code.append(f"{indent}      int k_global = {inner_k_var} * {k_sa} + kci;")
-    else:
-        code.append(f"{indent}      int k_global = kci;")
+    code.append(f"{indent}      int k_global = {_k_global_expr('kci')};")
     code.append(f"{indent}      int k_bank = k_global & 1;")
     code.append(f"{indent}      int k_blk  = k_global >> 1;")
-    code.append(f"{indent}      DTYPE wv = (k_bank==0) ? dram_w_b0[m_global * k_blks + k_blk]")
-    code.append(f"{indent}                             : dram_w_b1[m_global * k_blks + k_blk];")
+    if unroll:
+        code.append(f"{indent}      DTYPE wv = w_tile[mri][mci][kci];  // local reg — off AXI path")
+    else:
+        code.append(f"{indent}      DTYPE wv = (k_bank==0) ? dram_w_b0[m_global * k_blks + k_blk]")
+        code.append(f"{indent}                             : dram_w_b1[m_global * k_blks + k_blk];")
     code.append(f"{indent}      DTYPE iv = (k_bank==0) ? dram_in_b0[k_blk * N + {n_global_expr}]")
     code.append(f"{indent}                             : dram_in_b1[k_blk * N + {n_global_expr}];")
     code.append(f"{indent}      acc[acc_m] += wv * iv;")
@@ -338,9 +346,9 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: GemmBankSpec) -> str:
     code.append("")
 
     # Output write: loop over m lanes and write acc to banked ports
+    out_p = "#pragma GCC unroll" if unroll else "#pragma GCC nounroll"
     code.append(f"{indent}// Write accumulator to banked output ports")
-    m_tile_expr = outer_m_var if outer_m_var else "0"
-    code.append(f"{indent}#pragma GCC unroll {m_sf}")
+    code.append(f"{indent}{out_p} {m_sf}")
     code.append(f"{indent}for (int ml = 0; ml < {m_sf}; ++ml) {{")
     code.append(f"{indent}  int out_idx = {m_tile_expr} * N + {n_global_expr};")
     code.append(_out_store_switch("ml", bank.out_banks, "out_idx", "acc[ml]", f"{indent}  "))
@@ -361,7 +369,7 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: GemmBankSpec) -> str:
 # =========================
 
 def _extract_float_mul(extra_args: list) -> Tuple[str, list]:
-    pat = re.compile(r"^-C=__float_mul=(\d+)$")
+    pat = re.compile(r"^-C=__float_mule8m23b_127nih=(\d+)$")
     val = ""
     other = []
     for a in extra_args:
@@ -400,7 +408,7 @@ N_MUL="${{2:-$N_MUL_DEFAULT}}"
 
 FLOAT_MUL_FLAG=""
 if [[ -n "$N_MUL" ]]; then
-  FLOAT_MUL_FLAG="-C=__float_mul=$N_MUL"
+  FLOAT_MUL_FLAG="-C=__float_mule8m23b_127nih=$N_MUL"
 fi
 
 bambu "$TOP" \\
@@ -441,7 +449,7 @@ TB="testbench_common.c"
 
 BAMBU_OUT_ROOT="Bambu_outputs"
 
-# Optional first argument: N_MUL overrides -C=__float_mul=N
+# Optional first argument: N_MUL overrides -C=__float_mule8m23b_127nih=N
 N_MUL_DEFAULT="{float_mul_default}"
 N_MUL="${{1:-$N_MUL_DEFAULT}}"
 
@@ -463,12 +471,13 @@ run_bambu () {{
   local tag="$1"   # seq / sa
   local top="$2"   # top_level_*.c
 
-  local outdir="${{BAMBU_OUT_ROOT}}/${{tag}}"
-  local log="${{outdir}}/bambu_${{tag}}.log"
+  local nmul_tag="n${{N_MUL:-1}}"
+  local outdir="${{BAMBU_OUT_ROOT}}/${{tag}}/${{nmul_tag}}"
+  local log="${{outdir}}/bambu_${{tag}}_${{nmul_tag}}.log"
 
   local float_mul_flag=""
   if [[ -n "$N_MUL" ]]; then
-    float_mul_flag="-C=__float_mul=$N_MUL"
+    float_mul_flag="-C=__float_mule8m23b_127nih=$N_MUL"
   fi
 
   rm -rf "${{outdir}}"
@@ -476,13 +485,13 @@ run_bambu () {{
 
   (
     cd "${{outdir}}"
-    bambu "../../${{top}}" \\
+    bambu "../../../${{top}}" \\
       --top-fname=top_level \\
       --generate-interface=INFER \\
       --compiler={compiler} \\
       --clock-period={clock} \\
       -O{opt} -v{v} \\
-      --generate-tb="../../${{TB}}" \\
+      --generate-tb="../../../${{TB}}" \\
 {tb_flags}{other_flags}${{float_mul_flag:+${{float_mul_flag}}}} \\
       --simulate
   ) > "${{log}}" 2>&1
@@ -510,11 +519,11 @@ echo "seq cycles: $SEQ_CYCLES"
 echo " sa cycles: $SA_CYCLES"
 echo "================================================="
 echo "Logs:"
-echo "  $BAMBU_OUT_ROOT/seq/bambu_seq.log"
-echo "  $BAMBU_OUT_ROOT/sa/bambu_sa.log"
+echo "  $BAMBU_OUT_ROOT/seq/n${{N_MUL:-1}}/bambu_seq_n${{N_MUL:-1}}.log"
+echo "  $BAMBU_OUT_ROOT/sa/n${{N_MUL:-1}}/bambu_sa_n${{N_MUL:-1}}.log"
 echo "Bambu outputs:"
-echo "  $BAMBU_OUT_ROOT/seq"
-echo "  $BAMBU_OUT_ROOT/sa"
+echo "  $BAMBU_OUT_ROOT/seq/n${{N_MUL:-1}}"
+echo "  $BAMBU_OUT_ROOT/sa/n${{N_MUL:-1}}"
 """
 
 

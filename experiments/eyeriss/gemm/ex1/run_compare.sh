@@ -7,7 +7,7 @@ TB="testbench_common.c"
 
 BAMBU_OUT_ROOT="Bambu_outputs"
 
-# Optional first argument: N_MUL overrides -C=__float_mul=N
+# Optional first argument: N_MUL overrides -C=__float_mule8m23b_127nih=N
 N_MUL_DEFAULT=""
 N_MUL="${1:-$N_MUL_DEFAULT}"
 
@@ -29,12 +29,13 @@ run_bambu () {
   local tag="$1"   # seq / sa
   local top="$2"   # top_level_*.c
 
-  local outdir="${BAMBU_OUT_ROOT}/${tag}"
-  local log="${outdir}/bambu_${tag}.log"
+  local nmul_tag="n${N_MUL:-1}"
+  local outdir="${BAMBU_OUT_ROOT}/${tag}/${nmul_tag}"
+  local log="${outdir}/bambu_${tag}_${nmul_tag}.log"
 
   local float_mul_flag=""
   if [[ -n "$N_MUL" ]]; then
-    float_mul_flag="-C=__float_mul=$N_MUL"
+    float_mul_flag="-C=__float_mule8m23b_127nih=$N_MUL"
   fi
 
   rm -rf "${outdir}"
@@ -42,13 +43,13 @@ run_bambu () {
 
   (
     cd "${outdir}"
-    bambu "../../${top}" \
+    bambu "../../../${top}" \
       --top-fname=top_level \
       --generate-interface=INFER \
       --compiler=I386_GCC8 \
       --clock-period=5 \
       -O3 -v4 \
-      --generate-tb="../../${TB}" \
+      --generate-tb="../../../${TB}" \
       --tb-param-size=dram_w_b0:32 \
       --tb-param-size=dram_w_b1:32 \
       --tb-param-size=dram_in_b0:32 \
@@ -84,8 +85,8 @@ echo "seq cycles: $SEQ_CYCLES"
 echo " sa cycles: $SA_CYCLES"
 echo "================================================="
 echo "Logs:"
-echo "  $BAMBU_OUT_ROOT/seq/bambu_seq.log"
-echo "  $BAMBU_OUT_ROOT/sa/bambu_sa.log"
+echo "  $BAMBU_OUT_ROOT/seq/n${N_MUL:-1}/bambu_seq_n${N_MUL:-1}.log"
+echo "  $BAMBU_OUT_ROOT/sa/n${N_MUL:-1}/bambu_sa_n${N_MUL:-1}.log"
 echo "Bambu outputs:"
-echo "  $BAMBU_OUT_ROOT/seq"
-echo "  $BAMBU_OUT_ROOT/sa"
+echo "  $BAMBU_OUT_ROOT/seq/n${N_MUL:-1}"
+echo "  $BAMBU_OUT_ROOT/sa/n${N_MUL:-1}"

@@ -14,33 +14,33 @@ def conv_common_defs(mapping) -> str:
         f"#define S_TOTAL {int(d.get('S', 1))}\n\n"
     )
 
-def conv_tb_param_sizes(mapping: MappingInfo, bank: ConvBankSpec) -> dict:
-    out_banks = bank.out_banks
+def conv_tb_param_sizes(mapping: MappingInfo, bank: ConvBankSpec, spec=None) -> dict:
     in_banks  = bank.in_banks
-    w_banks   = bank.w_banks
-    info = mapping
-    d = info.dims
+    d = mapping.dims
     M, P, Q, C, R, S = d["M"], d["P"], d["Q"], d["C"], d["R"], d["S"]
     H, W = P + R - 1, Q + S - 1
-
-    # c split by 2 banks => c_blks = C/2 (assume divisible for now)
     c_blks = (C + in_banks - 1) // in_banks
-
     in_bank_elems = c_blks * H * W
     w_bank_elems  = M * c_blks * R * S
 
-    # output banking factors based on FF spatial mapping
-    m_sf = p_sf = q_sf = 1
-    for lvl in info.spatial_levels:
-        til = info.tiling.get(lvl, {})
-        if "M" in til: m_sf *= int(til["M"])
-        if "P" in til: p_sf *= int(til["P"])
-        if "Q" in til: q_sf *= int(til["Q"])
-    m_sf = max(1, m_sf); p_sf = max(1, p_sf); q_sf = max(1, q_sf)
-
-    Ptiles = (P + p_sf - 1) // p_sf
-    Qtiles = (Q + q_sf - 1) // q_sf
-    out_bank_elems = ((M + m_sf - 1) // m_sf) * Ptiles * Qtiles
+    if spec is not None:
+        N_M_sp = 1
+        for dim, f, _ in spec.out_dims:
+            if dim == 'M': N_M_sp *= f
+        N_Q_sp = 1
+        for dim, f, _ in spec.out_dims:
+            if dim == 'Q': N_Q_sp *= f
+        N_P_sp = 1
+        for dim, f, _ in spec.out_dims:
+            if dim == 'P': N_P_sp *= f
+        out_banks      = spec.N_out
+        out_bank_elems = (M // N_M_sp) * (P // N_P_sp) * (Q // N_Q_sp)
+    else:
+        out_banks      = bank.out_banks
+        m_sf, p_sf, q_sf = bank.m_sf, bank.p_sf, bank.q_sf
+        Ptiles = bank.p_tiles
+        Qtiles = bank.q_tiles
+        out_bank_elems = ((M + m_sf - 1) // m_sf) * Ptiles * Qtiles
 
     sizes = {
         "dram_in_b0": in_bank_elems * 4,
@@ -53,27 +53,31 @@ def conv_tb_param_sizes(mapping: MappingInfo, bank: ConvBankSpec) -> dict:
     return sizes
 
 
-def make_conv_testbench(mapping: MappingInfo, bank: ConvBankSpec) -> str:
-    out_banks = bank.out_banks
+def make_conv_testbench(mapping: MappingInfo, bank: ConvBankSpec,
+                        gather_bank_c: str = None,
+                        out_banks_n: int = None,
+                        out_bank_elems_n: int = None) -> str:
     in_banks  = bank.in_banks
-    w_banks   = bank.w_banks
-    info = mapping
-    d = info.dims
+    d = mapping.dims
     M, P, Q, C, R, S = d["M"], d["P"], d["Q"], d["C"], d["R"], d["S"]
     H, W = P + R - 1, Q + S - 1
-
-    # banking factors MUST match the kernel/generator
-    m_sf = int(bank.m_sf)
-    p_sf = int(bank.p_sf)
-    q_sf = int(bank.q_sf)
-
-    Ptiles = (P + p_sf - 1) // p_sf
-    Qtiles = (Q + q_sf - 1) // q_sf
 
     c_blks = (C + in_banks - 1) // in_banks
     in_bank_elems = c_blks * H * W
     w_bank_elems  = M * c_blks * R * S
-    out_bank_elems = ((M + m_sf - 1) // m_sf) * Ptiles * Qtiles
+
+    if out_banks_n is not None:
+        out_banks      = out_banks_n
+        out_bank_elems = out_bank_elems_n
+    else:
+        # legacy fallback
+        m_sf = int(bank.m_sf)
+        p_sf = int(bank.p_sf)
+        q_sf = int(bank.q_sf)
+        Ptiles = (P + p_sf - 1) // p_sf
+        Qtiles = (Q + q_sf - 1) // q_sf
+        out_banks      = bank.out_banks
+        out_bank_elems = ((M + m_sf - 1) // m_sf) * Ptiles * Qtiles
 
     in_full_e  = C * H * W
     w_full_e   = M * C * R * S
@@ -124,6 +128,23 @@ def make_conv_testbench(mapping: MappingInfo, bank: ConvBankSpec) -> str:
     mdpi_alloc += f"    m_param_alloc(3, {w_bank_elems} * sizeof(DTYPE));\n"
     for i in range(out_banks):
         mdpi_alloc += f"    m_param_alloc({4+i}, {out_bank_elems} * sizeof(DTYPE));\n"
+
+    # Build gather block: use FF-order decomposition if provided, else legacy
+    if gather_bank_c is not None:
+        gather_block = gather_bank_c
+    else:
+        m_sf = int(bank.m_sf); p_sf = int(bank.p_sf); q_sf = int(bank.q_sf)
+        Ptiles = (P + p_sf - 1) // p_sf; Qtiles = (Q + q_sf - 1) // q_sf
+        gather_block = (
+            f"int lane_m = ({m_sf}==1)?0:(m % {m_sf});\n"
+            f"          int lane_p = ({p_sf}==1)?0:(p % {p_sf});\n"
+            f"          int lane_q = ({q_sf}==1)?0:(q % {q_sf});\n"
+            f"          int bank = (lane_m*{p_sf} + lane_p)*{q_sf} + lane_q;\n"
+            f"          int cm = ({m_sf}==1)?m:(m / {m_sf});\n"
+            f"          int cp = ({p_sf}==1)?p:(p / {p_sf});\n"
+            f"          int cq = ({q_sf}==1)?q:(q / {q_sf});\n"
+            f"          int idx_b = (cm*{Ptiles} + cp)*{Qtiles} + cq;"
+        )
 
     code += f"""
 #include <stdlib.h>
@@ -250,15 +271,7 @@ int main() {{
       for (int p = 0; p < {P}; ++p)
         for (int q = 0; q < {Q}; ++q) {{
 
-          int lane_m = ({m_sf}==1)?0:(m % {m_sf});
-          int lane_p = ({p_sf}==1)?0:(p % {p_sf});
-          int lane_q = ({q_sf}==1)?0:(q % {q_sf});
-          int bank = (lane_m*{p_sf} + lane_p)*{q_sf} + lane_q;
-
-          int cm = ({m_sf}==1)?m:(m / {m_sf});
-          int cp = ({p_sf}==1)?p:(p / {p_sf});
-          int cq = ({q_sf}==1)?q:(q / {q_sf});
-          int idx_b = (cm*{Ptiles} + cp)*{Qtiles} + cq;
+          {gather_block}
 
           int out_idx = m*{P}*{Q} + p*{Q} + q;
           switch(bank) {{

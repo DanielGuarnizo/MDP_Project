@@ -1,0 +1,4 @@
+#!/bin/bash
+ulimit -s 131072
+(/usr/bin/clang-16 -fplugin=/opt/panda/gcc_plugins/clang16_plugin_ASTAnalyzer.so -c -D__NO_INLINE__    -m32 -Xclang -add-plugin -Xclang clang16_plugin_ASTAnalyzer -Xclang -plugin-arg-clang16_plugin_ASTAnalyzer -Xclang -action -Xclang -plugin-arg-clang16_plugin_ASTAnalyzer -Xclang analyze -Xclang -plugin-arg-clang16_plugin_ASTAnalyzer -Xclang -outputdir -Xclang -plugin-arg-clang16_plugin_ASTAnalyzer -Xclang panda-temp -Xclang -plugin-arg-clang16_plugin_ASTAnalyzer -Xclang -topfname -Xclang -plugin-arg-clang16_plugin_ASTAnalyzer -Xclang top_level  --std=gnu11 -DCUSTOM_VERIFICATION -D__BAMBU__ -Dprintf\(fmt,\ ...\)= -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration -Wno-int-conversion -o panda-temp/run-0b16-f986-acc7-919d.o "/workspace/experiments/eyeriss/conv/ex2/top_level_sa.c")  2>&1 | tee "panda-temp/__gcc_output"
+exit ${PIPESTATUS[0]}

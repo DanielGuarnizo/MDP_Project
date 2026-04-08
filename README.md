@@ -25,7 +25,7 @@ gcc -O2 -o cpu_seq top_level_seq.c testbench_common.c -lm && ./cpu_seq
 
 # 3. Bambu co-simulation + cycle count (slow)
 ./run_compare.sh          # default N_mul
-./run_compare.sh 4        # override N_mul=4 (-C=__float_mul=4)
+./run_compare.sh 4        # override N_mul=4 (-C=__float_mule8m23b_127nih=4)
 
 # 4. Analytical cycle model (no Bambu needed)
 python src/model.py --ff experiments/eyeriss/conv/ex1/FF_output/FF_output.txt --n-mul 1 2 4 8 16
@@ -611,3 +611,266 @@ alpha_p = alpha_s * (heaviest_port_reads / total_reads_all_ports)
 This assumes the overhead ratio between regimes is proportional to the ratio of work done.
 It is explicitly marked as a rough estimate in the model output (`"heuristic estimate"`).
 If neither alpha is known, both default to 1.0, giving the theoretical lower bound.
+
+---
+
+## 7. Design Journey: Failed Approaches
+
+This section documents wrong assumptions and implementations tried before arriving at the current
+design. The solution is non-trivial; understanding what failed and why is as important as
+understanding what works.
+
+### 7.1 Wrong accumulator placement — `dram_acc` as AXI pointer
+
+**Tried:** Pass the accumulator as an extra AXI DRAM parameter `DTYPE *dram_acc`, exactly like the
+input/weight/output banks. Every MAC read the current partial sum, added the product, and wrote
+back.
+
+**Result:** ~46 764 cycles, completely flat regardless of N_mul.
+
+**Why it failed:** AXI initiation latency is approximately 20 cycles per access. With 96 unrolled
+MAC call-sites each requiring an accumulator read AND write through the AXI bus, the accumulator
+port became the binding bottleneck — 96 × 2 × 20 ≈ 3 840 cycles of pure AXI overhead per inner
+body, dwarfing any compute benefit from additional multipliers. N_mul had zero effect because the
+accumulator bus, not the FP multipliers, serialised everything.
+
+**Fix:** Declare `DTYPE acc[m_sf * q_sf]` at **function scope** before all loops. With all spatial
+loops fully unrolled via `#pragma GCC unroll N`, GCC's SROA pass (-O3) sees each access as
+`acc[compile_time_constant]` and promotes every element to an independent scalar register — no
+memory access at all on the accumulator path. The accumulator moves completely off the critical
+path.
+
+---
+
+### 7.2 Wrong Bambu FP-multiplier flag — `__float_mul` vs `__float_mule8m23b_127nih`
+
+**Tried:** `-C=__float_mul=N` — a flag name found in early documentation and community examples.
+
+**Result:** Flag silently ignored. Bambu instantiated one hardware multiplier module per
+`__float_mule8m23b_127nih` call-site (96 instances for ex1). Cycles were flat at ~4 148
+regardless of N_mul — exactly what you would see with unlimited multipliers, because Bambu had
+created 96 of them.
+
+**Why it failed:** Bambu's `I386_GCC8` soft-float library names its single-precision multiply
+function `__float_mule8m23b_127nih` (the suffix encodes: e8/m23 IEEE-754 format, bias 127,
+not-in-hardware implementation). The `-C=function_name=N` constraint flag only activates when
+`function_name` matches the synthesized function exactly. `__float_mul` does not exist in this
+compiler target — the flag was silently treated as a no-op and Bambu created one FP multiplier
+per call-site by default.
+
+**Fix:** Replace every occurrence with `-C=__float_mule8m23b_127nih=N` in `compile_bambu.sh`,
+`run_compare.sh`, and the generator's `_extract_float_mul()` regex. With the correct name and
+N=1, Bambu instantiates a single shared multiplier, serialising all 96 call-sites through it
+(~18 452 cycles). At N=8 → ~5 012 cycles; at N=96 → ~4 148 cycles. The decreasing curve
+confirms the constraint is now active.
+
+---
+
+### 7.3 Weight reads on the AXI critical path — missing weight preload
+
+**Tried:** A single compute phase that read both weights **and** inputs from AXI on every MAC
+iteration, with all spatial loops unrolled:
+
+```c
+// inside the unrolled (c, s, ml, ql) body:
+DTYPE wv = dram_w_b{c_bank}[w_idx];   // AXI weight read per (c,s,ml)
+DTYPE iv = dram_in_b{c_bank}[i_idx];  // AXI input  read per (c,s,ql)
+acc[ml*2+ql] += wv * iv;
+```
+
+**Result:** Cycles decreased with N_mul but saturated at a high floor, roughly twice as high as
+the current design. Adding more multipliers gave diminishing returns very early.
+
+**Why it failed:** With m_sf=4, C_sa=4, S_sa=3, there are 48 weight call-sites and 24 input
+call-sites per inner r-body (96 multiplications total). The weight reads were NOT reusable across
+M-lanes — `w_idx` depends on `ml` (different M-lane → different filter weight). So Bambu saw 48
+AXI weight reads AND 24 AXI input reads, all on the same critical path as the 96 FP muls. Both
+AXI buses were fully loaded; doubling N_mul didn't halve cycles because two separate AXI buses
+were the co-bottleneck.
+
+**Fix:** Two-phase loop body inside the sequential inner loop (R for CONV, K for GEMM):
+
+- **Phase 1 (weight preload):** Fully unrolled over `(C_sa, S_sa, m_sf)` → load the entire
+  `w_tile[C_sa][S_sa][m_sf]` tile from AXI weight banks into local scalar registers (SROA at
+  -O3 → no BRAM, pure register file). This is a single sequential AXI burst that runs once per
+  r-step; it is **not** on the FP-multiply critical path.
+
+- **Phase 2 (compute):** Fully unrolled over `(C_sa, S_sa, m_sf, q_sf)` → all weight values come
+  from `w_tile[c][s][ml]` (register, zero latency). Only AXI **input** reads remain on the
+  critical path. Bambu can pipeline input reads across all m_sf lanes without stalling on the
+  weight bus.
+
+The result: input reads drop from 48+24=72 to 24 per r-body on the critical path, roughly halving
+the memory-bound floor and allowing the cycle count to decrease further with N_mul.
+
+---
+
+### 7.4 Sequential kernel as an independent flat-loop implementation
+
+**Tried:** `_emit_top_level_seq()` as a completely separate function with a textbook flat loop
+nest `(M, P, Q, C, R, S)` for CONV or `(M, N, K)` for GEMM.
+
+**Risk (not an immediate bug, but a maintenance hazard):** The index arithmetic, banking formulae,
+and output write logic in seq diverged from SA over multiple iterations. Fixing a bug in the SA
+kernel required manually finding and mirroring the change in seq, and the two implementations
+briefly had mismatched accumulator handling, causing transient correctness failures during
+development.
+
+**Fix:** Seq now delegates entirely to SA with `unroll=False`:
+
+```python
+def _emit_top_level_seq(mapping, bank):
+    return _emit_top_level_sa(mapping, bank, unroll=False)
+```
+
+When `unroll=False`, every `#pragma GCC unroll N` becomes `#pragma GCC nounroll`, Phase 1 weight
+preload is omitted, and weights are read inline. The outer loop structure, variable names, index
+expressions, and output write are identical by construction. Any mapping that passes the CPU
+correctness test for SA passes it for seq as well.
+
+---
+
+## 8. Known Behavioral Properties
+
+This section explains measurement results that initially appear to be bugs but are
+physically correct and inherent to the design.
+
+### 8.1 CONV sequential kernel cycles decrease with N_mul
+
+**Observation:**
+
+| N_mul | SA cycles | seq cycles |
+|-------|-----------|------------|
+| 1     | 23 660    | 24 548     |
+| 2     | 10 556    | 17 636     |
+| 4     |  6 692    | 13 604     |
+
+Seq decreases with N_mul. The expected behavior for a "sequential" baseline is flat.
+
+**Root cause — loop order exposes 8-way implicit ILP to Bambu:**
+
+The CONV seq kernel (generated by delegating to SA with `unroll=False`) has this inner loop
+ordering:
+
+```c
+for (int r = 0; r < R; ++r) {            // reduction — sequential (nounroll)
+  for (int c = 0; c < C; ++c) {          // reduction — sequential (nounroll)
+    for (int s = 0; s < S; ++s) {        // reduction — sequential (nounroll)
+      for (int ml = 0; ml < m_sf; ++ml) {  // spatial lane — INNERMOST (nounroll)
+        for (int ql = 0; ql < q_sf; ++ql) {  // spatial lane — INNERMOST (nounroll)
+          acc[ml * 2 + ql] += wv * inv;
+        }
+      }
+    }
+  }
+}
+```
+
+The **spatial lane loops** (`ml`, `ql`) are **innermost**. Consecutive `ql` iterations write to
+`acc[ml*2+0]` and `acc[ml*2+1]` — **different** accumulator elements, with no RAW (Read After
+Write) dependency between them. Within one `(r, c, s)` step, all 8 `(ml, ql)` combinations
+update **independent** acc slots. Even without `#pragma GCC unroll`, Bambu's scheduler can detect
+this 8-way independence through static analysis and schedule all 8 multiplications concurrently
+when enough FP units are available. With more multipliers → seq cycles fall.
+
+**This is NOT a bug.** It is a direct consequence of the seq kernel sharing the SA loop ordering
+(which places spatial dimensions innermost for SA's benefit). The seq kernel in this project is
+best described as a *banked-I/O baseline with implicit spatial parallelism*, not a strictly
+single-chain sequential accumulation.
+
+**Why GEMM seq is correctly flat:** In GEMM seq the innermost loop is `kci`, and each `kci`
+iteration writes to the **same** `acc[mri]` — a strict RAW dependency chain that Bambu cannot
+pipeline regardless of N_mul:
+
+```c
+for (int kci = 0; kci < k_sa; ++kci) {
+    acc[mri] += wv * iv;   // acc[mri] RAW dependency: each iteration reads previous result
+}
+```
+
+**How to get a truly flat CONV seq:** Put the spatial lanes (`ml`, `ql`) **outside** the
+reduction loops and use a single scalar `DTYPE acc_s = 0.0f` per lane:
+
+```c
+for (int ml = 0; ml < m_sf; ++ml) {
+  for (int ql = 0; ql < q_sf; ++ql) {
+    DTYPE acc_s = 0.0f;           // single scalar: strict RAW chain
+    for (int r ...) for (int c ...) for (int s ...)
+      acc_s += w * in;            // every iteration reads previous acc_s
+    // write acc_s to dram_out_b{ml*q_sf+ql}
+  }
+}
+```
+
+This structure is truly single-chain and flat vs N_mul. We deliberately keep the current design
+(seq mirrors SA loop order) because it preserves structural correspondence and correctness
+guarantees between the two kernels. The seq decrease with N_mul is an accepted, documented
+property.
+
+---
+
+### 8.2 SA saturates before N_mul = U
+
+**Observation (CONV ex1, U = 96):** SA cycle count stops decreasing around N_mul ≈ 64, not at
+the theoretical U = 96 where all 96 FP multiplications could run in parallel.
+
+**Root cause — memory crossover N_mul\* < U:**
+
+After weight preload, Phase 2 contains:
+- **96 FP multiplications** (U = m_sf × C_sa × S_sa × q_sf = 4×4×3×2)
+- **24 AXI input reads** (C_sa × S_sa × q_sf = 4×3×2), distributed across 2 banks = **12 per bank**
+
+The input read index `inv = dram_in_b{c_bank}[in_row_base + in_col]` does **not** depend on `ml`
+(the M-lane index). All 4 M-lanes use the **same** input value for a given `(c, s, ql)` → 4×
+input reuse across M-lanes. Unique AXI reads = 24, not 96.
+
+**Pure bandwidth crossover:**
+```
+N_mul* = U / reads_per_port = 96 / 12 = 8
+```
+
+Above N_mul=8, Phase 2 is AXI-bandwidth-bound: the input buses cannot supply data faster
+regardless of how many multipliers are available. However, AXI also has **latency** (~20 cycles
+per read, not just 1 cycle throughput). With more in-flight FP multiplications, Bambu can
+speculatively issue AXI reads earlier, overlapping memory latency with pending compute ("latency
+hiding"). At N_mul ≈ 64, Bambu has enough concurrent operations to fully prefetch all 24 input
+reads before they are needed — no further latency can be hidden, and cycles flatten completely.
+
+**Summary:** N_mul\*=8 (bandwidth-bound), empirical saturation at ~64 (latency hiding exhausted).
+
+**This is NOT a bug** — it is physically correct behaviour. Saturation before U reflects:
+1. Input reuse across M-lanes (4× reuse → 4× fewer unique reads → 4× earlier memory saturation)
+2. AXI latency extending the useful regime from N_mul\*=8 to ~64
+
+**This is inherent to the Eyeriss dataflow.** M-lane input reuse is a core efficiency property —
+removing it would increase bandwidth but require more AXI ports and destroy the area-efficiency
+benefit of the spatial array.
+
+---
+
+### 8.3 Under which mapping does SA saturate at exactly N_mul = U?
+
+Saturation at N_mul = U requires `reads_per_port = 1` in Phase 2 after weight preload —
+every one of the U FP multiplications must correspond to exactly one unique AXI input read per
+bank.
+
+**Condition (CONV):** `C_sa × S_sa × q_sf = 2` (2 reads across 2 banks = 1 per bank):
+
+| m_sf | C_sa | S_sa | q_sf | U  | reads/bank | N_mul\* |
+|------|------|------|------|----|------------|---------|
+|  4   |  4   |  3   |  2   | 96 |     12     |    8    | ← current ex1
+|  8   |  2   |  1   |  1   | 16 |      1     |   16 = U | ← saturation at U
+
+**Condition (GEMM):** `k_sa = 2` (2 K-steps across 2 banks = 1 input read per bank per body):
+
+| m_sf | k_sa | U  | reads/bank | N_mul\* |
+|------|------|----|------------|---------|
+|  8   |  8   | 64 |      4     |   16    | ← current ex2 (bandwidth-bound at 16, latency extends to ~64)
+|  8   |  2   | 16 |      1     |   16 = U | ← saturation at exactly U=16
+
+**The fundamental trade-off:** when `reads_per_port = 1`, the spatial body does minimal work per
+AXI read (low reduction depth), so U itself is small. Mappings that maximise U (more spatial
+parallelism) inevitably have more input reads per body, pushing N_mul\* below U. The current
+mappings (k_sa=8, C_sa×S_sa=12) trade a higher U for an earlier memory crossover — deliberately
+accepting that saturation occurs at N_mul < U in exchange for higher peak compute parallelism and
+better data reuse.
