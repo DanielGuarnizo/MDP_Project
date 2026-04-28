@@ -35,15 +35,15 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
     // 80 PE accumulators: acc[5][2][2][4]
     DTYPE acc[5][2][2][4];
 
-    // M tile (synthetic outer loop)
+    // DRAM_0 = Q:4
     #pragma GCC nounroll
-    for (int m_tile = 0; m_tile < 2; ++m_tile) {
-      // DRAM → Q:4
+    for (int dram_0 = 0; dram_0 < 4; ++dram_0) {
+      // GlobalBuffer_0 = P:8
       #pragma GCC nounroll
-      for (int q_dram = 0; q_dram < 4; ++q_dram) {
-        // GlobalBuffer → P:8
+      for (int gb_0 = 0; gb_0 < 8; ++gb_0) {
+        // OutRegister_0 = M:2
         #pragma GCC nounroll
-        for (int p_gb = 0; p_gb < 8; ++p_gb) {
+        for (int or_0 = 0; or_0 < 2; ++or_0) {
           // Zero 80 PE accumulators (nounroll — non-spatial init)
           #pragma GCC nounroll
           for (int sarows_0 = 0; sarows_0 < 5; ++sarows_0) {
@@ -77,7 +77,7 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
                     int c_global = (c_seq * 2 + (sarows_1));
                     int c_bank = c_global & 1;
                     int c_blk  = c_global >> 1;
-                    int w_idx = ((m_tile * 4 + (sacols_1)) * ((C + in_banks - 1) / in_banks) + c_blk) * (R * S) + r * S + sarows_0;
+                    int w_idx = ((or_0 * 4 + (sacols_1)) * ((C + in_banks - 1) / in_banks) + c_blk) * (R * S) + r * S + sarows_0;
                     w_tile[sarows_0][sarows_1][sacols_1] = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];
                   }  // sacols_1 (preload)
                 }  // sarows_1 (preload)
@@ -86,7 +86,7 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
               // ---- Phase 2a: multiply — 80 independent products ----
               // p[5][2][2][4]: GCC SROA → 80 scalar float regs
               DTYPE p[5][2][2][4];
-              int q_base = q_dram * 2;
+              int q_base = dram_0 * 2;
               #pragma GCC unroll 5
               for (int sarows_0 = 0; sarows_0 < 5; ++sarows_0) {  // S:5
                 #pragma GCC unroll 2
@@ -99,7 +99,7 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
                       int c_bank = c_global & 1;
                       int c_blk  = c_global >> 1;
                       int in_c_base = c_blk * (H * W);
-                      int in_row_base = in_c_base + (p_gb + r) * W;
+                      int in_row_base = in_c_base + (gb_0 + r) * W;
                       int in_col = q_base + sacols_0 + sarows_0;
                       DTYPE wv = w_tile[sarows_0][sarows_1][sacols_1];
                       DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]
@@ -153,9 +153,9 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
             #pragma GCC unroll 4
             for (int sacols_1 = 0; sacols_1 < 4; ++sacols_1) {
               int out_bank = sacols_0*4 + sacols_1;
-              int cm = m_tile;
-              int cp = p_gb;
-              int cq = q_dram;
+              int cm = or_0;
+              int cp = gb_0;
+              int cq = dram_0;
               int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;
               DTYPE v = reduced[sacols_0][sacols_1];
               switch(out_bank) {
@@ -171,7 +171,7 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
               }
             }
           }
-        }  // outer
-      }  // outer
-    }  // outer
+        }  // outer_out
+      }  // outer_out
+    }  // outer_out
 }

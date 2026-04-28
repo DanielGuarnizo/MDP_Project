@@ -13,30 +13,56 @@
 
 void top_level(DTYPE *dram_w_b0, DTYPE *dram_w_b1, DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_out_b0, DTYPE *dram_out_b1)
 {
-    // Sequential GEMM baseline (banked I/O, write-only outputs)
+    // sequential baseline Eyeriss GEMM -- loop structure mirrors FF mapping hierarchy
     const int M=4, K=1, N=4;
-    const int m_sf=2, k_blks=1, M_tiles=2;
+    const int m_sf=2, m_sacols=2, m_sarows=1;
+    const int k_sa=1, k_blks=1, M_tiles=2;
 
-    for (int m = 0; m < M; ++m) {
-      for (int n = 0; n < N; ++n) {
-        DTYPE acc = 0.0f;
-        for (int k = 0; k < K; ++k) {
-          int k_bank = k & 1;
-          int k_blk  = k >> 1;
-          DTYPE wv = (k_bank==0) ? dram_w_b0[m * k_blks + k_blk]
-                                 : dram_w_b1[m * k_blks + k_blk];
-          DTYPE iv = (k_bank==0) ? dram_in_b0[k_blk * N + n]
-                                 : dram_in_b1[k_blk * N + n];
-          acc += wv * iv;
-        }
-        int out_bank = m % m_sf;
-        int m_tile   = m / m_sf;
-        int out_idx  = m_tile * N + n;
-        switch(out_bank) {
-          case 0: dram_out_b0[out_idx] = acc; break;
-          case 1: dram_out_b1[out_idx] = acc; break;
-          default: break;
-        }
-      }
-    }
+    // Accumulator: flat 1D at function scope → GCC SROA → 2 scalar regs
+    DTYPE acc[2];
+
+    // M tile (synthetic outer loop)
+    #pragma GCC nounroll
+    for (int m_tile = 0; m_tile < 2; ++m_tile) {
+      // DRAM → N:4
+      #pragma GCC nounroll
+      for (int n_dram = 0; n_dram < 4; ++n_dram) {
+        // Zero accumulator (nounroll — non-spatial init)
+        #pragma GCC nounroll
+        for (int mi = 0; mi < 2; ++mi) acc[mi] = 0.0f;
+
+        // SARows M:1 × SACols M:2 × SACols K:1
+        #pragma GCC nounroll 1
+        for (int mri = 0; mri < 1; ++mri) {
+          #pragma GCC nounroll 2
+          for (int mci = 0; mci < 2; ++mci) {
+            int acc_m = mri * 2 + mci;
+            int m_global = m_tile * 2 + acc_m;
+            #pragma GCC nounroll 1
+            for (int kci = 0; kci < 1; ++kci) {
+              int k_global = kci;
+              int k_bank = k_global & 1;
+              int k_blk  = k_global >> 1;
+              DTYPE wv = (k_bank==0) ? dram_w_b0[m_global * k_blks + k_blk]
+                                     : dram_w_b1[m_global * k_blks + k_blk];
+              DTYPE iv = (k_bank==0) ? dram_in_b0[k_blk * N + n_dram]
+                                     : dram_in_b1[k_blk * N + n_dram];
+              acc[acc_m] += wv * iv;
+            }  // kci
+          }  // mci
+        }  // mri
+
+
+        // Write accumulator to banked output ports
+        #pragma GCC nounroll 2
+        for (int ml = 0; ml < 2; ++ml) {
+          int out_idx = m_tile * N + n_dram;
+          switch(ml) {
+            case 0: dram_out_b0[out_idx] = acc[ml]; break;
+            case 1: dram_out_b1[out_idx] = acc[ml]; break;
+            default: break;
+          }
+        }  // ml
+      }  // outer
+    }  // outer
 }

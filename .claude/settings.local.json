@@ -89,7 +89,30 @@
       "Bash(pip install:*)",
       "Bash(git add:*)",
       "Bash(git commit -m ':*)",
-      "Bash(ls /workspace/*.py)"
+      "Bash(ls /workspace/*.py)",
+      "Bash(xargs -I{} sh -c 'echo \"=== {} ===\" && cat {}')",
+      "Bash(mkdir -p /workspace/tests/eyeriss/conv /workspace/tests/eyeriss/gemm)",
+      "Bash(touch /workspace/tests/eyeriss/__init__.py)",
+      "Bash(touch /workspace/tests/eyeriss/conv/__init__.py)",
+      "Bash(touch /workspace/tests/eyeriss/gemm/__init__.py)",
+      "Bash(mv /workspace/tests/test_eyeriss_conv.py /workspace/tests/eyeriss/conv/)",
+      "Bash(awk '/^def _emit_top_level_sa/,/^def [a-z_]/' /workspace/src/codegen/conv/eyeriss_generator.py)",
+      "Bash(git -C /workspace log --oneline --diff-filter=D -- \"tests/test_model*\")",
+      "Bash(git -C /workspace show HEAD:tests/test_model_eyeriss_conv.py)",
+      "Bash(git -C /workspace log --all --oneline -- \"tests/test_model*\")",
+      "Bash(sort -t- -k1 -n)",
+      "Bash(awk -F- '{print $1}')",
+      "Bash(awk '{ *)",
+      "Bash(sort -t: -k1 -n)",
+      "Bash(sort -k1 -n)",
+      "Bash(awk '$1<=15')",
+      "Bash(awk '$1>=2 && $1<=11')",
+      "Bash(awk '{print $1}')",
+      "Bash(awk '$1>=192')",
+      "Bash(awk '$1>=228 && $1<=231')",
+      "Bash(awk '$1>=9 && $1<=18')",
+      "Bash(awk '$1==122 || $1==129 || $1==136 || $1==143 || $1==150 || $1==157 || $1==164 || $1==171 || $1==178 || $1==185 || $1==192')",
+      "Bash(awk '$1==10')"
     ]
   }
 }

@@ -1,6 +1,6 @@
 // 
 // Politecnico di Milano
-// Code created using PandA - Version: PandA 2024.10 - Revision c2ba6936ca2ed63137095fea0b630a1c66e20e63-main - Date 2026-04-02T00:29:59
+// Code created using PandA - Version: PandA 2024.10 - Revision c2ba6936ca2ed63137095fea0b630a1c66e20e63-main - Date 2026-04-09T09:58:20
 // Bambu executed with: bambu --top-fname=top_level --generate-interface=INFER --compiler=I386_GCC8 --clock-period=5 -O3 -v4 --generate-tb=/workspace/experiments/eyeriss/conv/ex6/testbench_common.c --tb-param-size=dram_in_b0:384 --tb-param-size=dram_in_b1:384 --tb-param-size=dram_w_b0:96 --tb-param-size=dram_w_b1:96 --tb-param-size=dram_out_b0:24 --tb-param-size=dram_out_b1:24 --tb-param-size=dram_out_b2:24 --tb-param-size=dram_out_b3:24 --tb-param-size=dram_out_b4:24 --tb-param-size=dram_out_b5:24 --tb-param-size=dram_out_b6:24 --tb-param-size=dram_out_b7:24 --tb-param-size=dram_out_b8:24 --tb-param-size=dram_out_b9:24 --tb-param-size=dram_out_b10:24 --tb-param-size=dram_out_b11:24 --tb-param-size=dram_out_b12:24 --tb-param-size=dram_out_b13:24 --tb-param-size=dram_out_b14:24 --tb-param-size=dram_out_b15:24 --tb-param-size=dram_out_b16:24 --tb-param-size=dram_out_b17:24 --tb-param-size=dram_out_b18:24 --tb-param-size=dram_out_b19:24 --tb-param-size=dram_out_b20:24 --tb-param-size=dram_out_b21:24 --tb-param-size=dram_out_b22:24 --tb-param-size=dram_out_b23:24 -C=__float_mule8m23b_127nih=8 -C=__float_adde8m23b_127nih=8 --simulate /workspace/experiments/eyeriss/conv/ex6/top_level_sa.c 
 // 
 // Send any bug to: panda-info@polimi.it

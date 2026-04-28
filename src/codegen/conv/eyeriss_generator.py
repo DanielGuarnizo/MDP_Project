@@ -438,455 +438,486 @@ def _classify_levels(mapping: MappingInfo):
     return outer_mem, fanout, inner_mem
 
 
-def _emit_top_level_sa(mapping: MappingInfo, bank: ConvBankSpec, unroll: bool = True) -> str:
-    """
-    Generalized SA-shaped kernel (Option B):
-    - Loop structure derived directly from the FF mapping hierarchy.
-    - Accumulator: flat 1D DTYPE acc[spec.N_out] at FUNCTION SCOPE.
-      GCC SROA at -O3 with spatial loops fully unrolled → acc becomes independent
-      scalar registers (no BRAM port contention).
-    - Outer temporal loops  → MemLevels above FanoutLevels (DRAM, GlobalBuffer).
-                              All have #pragma GCC nounroll.
-    - Acc init              → nounroll (non-spatial, must not be unrolled).
-    - Inner sequential loop → MemLevels below FanoutLevels (WRegister R).
-                              All have #pragma GCC nounroll.
-    - When unroll=True (SA): two-phase r-loop body:
-        Phase 1: preload weights into local w_tile[C_sa][S_sa][N_M_sp] with
-                 fully unrolled c,s,ml loops → GCC SROA → scalar weight regs.
-        Phase 2: compute with unrolled c,s,ml,ql using w_tile (local regs)
-                 + AXI input reads only.
-    - When unroll=False (seq): single-phase: all loops nounroll, inline weight
-      AXI reads (no preload).
-    - Output write: generalized over all spec.out_dims (FF order).
-    Always emitted (no fallback).
-    """
+def _level_short(lvl: str) -> str:
+    return {"DRAM": "dram", "GlobalBuffer": "gb", "WRegister": "wr", "InRegister": "ir"}.get(
+        lvl, lvl.lower()[:3]
+    )
+
+
+def _composite_tile_expr(terms: list) -> Tuple:
+    """[(vname, fac), ...] → (composite_expr_or_None, total_factor)."""
+    if not terms:
+        return None, 1
+    total = math.prod(f for _, f in terms)
+    remaining = total
+    parts = []
+    for vname, f in terms:
+        remaining //= f
+        parts.append(vname if remaining == 1 else f"{vname} * {remaining}")
+    expr = " + ".join(parts)
+    return (f"({expr})" if len(parts) > 1 else expr), total
+
+
+@dataclass
+class _SACtx:
+    """Pre-computed loop-structure facts, threaded through SA/SEQ kernel emitters."""
+    M: int; P: int; Q: int; C: int; R: int; S: int; H: int; W: int
+    in_banks: int
+    spec: SADimSpec
+    lvars: List[str]
+    N_M_sp: int; N_Q_sp: int; N_P_sp: int
+    Ptiles: int; Qtiles: int
+    outer_out_specs: List       # [(vname, fac, comment, dim)]  output-dim outer loops
+    outer_red_specs: List       # [(vname, fac, comment, dim)]  reduction-dim outer loops
+    outer_q_var: Any; outer_q_factor: int
+    outer_p_var: Any; outer_p_factor: int
+    outer_m_var: Any; outer_m_factor: int
+    outer_c_var: Any; outer_c_factor: int
+    outer_s_var: Any; outer_s_factor: int
+    inner_loop_specs: List      # [(vname, fac, comment)]
+    inner_r_var: Any
+    inner_c_var: Any
+    inner_c_factor: int
+    C_sa: int; S_sa: int
+
+
+def _build_sa_ctx(mapping: MappingInfo, bank: ConvBankSpec) -> _SACtx:
+    """Derive all loop-structure facts from the mapping; return as _SACtx."""
     d = mapping.dims
     M = int(d["M"]); P = int(d["P"]); Q = int(d["Q"])
     C = int(d.get("C", 1)); R = int(d.get("R", 1)); S = int(d.get("S", 1))
     H = P + R - 1; W = Q + S - 1
-    in_banks = bank.in_banks  # 2
 
-    # ---- SA dim spec — computed early (needed for N_out, Ptiles, Qtiles) ----
-    spec = _classify_sa_dims(mapping)
-    shape_str = "".join(f"[{f}]" for _, f, _ in spec.all_dims)
+    spec  = _classify_sa_dims(mapping)
     lvars = spec.loop_vars()
-    zeros = "".join("[0]" for _ in spec.all_dims)
 
-    # Derive output banking from spec (single source of truth)
-    N_M_sp = math.prod(f for d, f, _ in spec.out_dims if d == 'M') or 1
-    N_Q_sp = math.prod(f for d, f, _ in spec.out_dims if d == 'Q') or 1
-    N_P_sp = math.prod(f for d, f, _ in spec.out_dims if d == 'P') or 1
+    N_M_sp = math.prod(f for dm, f, _ in spec.out_dims if dm == 'M') or 1
+    N_Q_sp = math.prod(f for dm, f, _ in spec.out_dims if dm == 'Q') or 1
+    N_P_sp = math.prod(f for dm, f, _ in spec.out_dims if dm == 'P') or 1
     Qtiles = Q // N_Q_sp
     Ptiles = P // N_P_sp
 
-    hdr = _emit_headers_and_pragmas(spec.N_out)
-    sig = _emit_top_signature(spec.N_out)
-
-    outer_mem, fanout, inner_mem = _classify_levels(mapping)
+    outer_mem, _fanout, inner_mem = _classify_levels(mapping)
     tiling = mapping.tiling
+    _OUTPUT_DIMS = {'M', 'P', 'Q'}
 
-    # ---- Outer temporal loops ----
-    def _level_short(lvl):
-        s = {"DRAM": "dram", "GlobalBuffer": "gb", "WRegister": "wr", "InRegister": "ir"}
-        return s.get(lvl, lvl.lower()[:3])
+    outer_q_terms: list = []; outer_p_terms: list = []; outer_m_terms: list = []
+    outer_c_terms: list = []; outer_s_terms: list = []
+    level_ctr: Dict[str, int] = {}
+    outer_loop_specs: list = []
 
-    outer_q_terms: list = []
-    outer_p_terms: list = []
-    outer_m_terms: list = []
-
-    outer_loop_specs = []  # [(varname, factor, comment)]
     for lvl in outer_mem:
-        til = tiling.get(lvl, {})
         abbr = _level_short(lvl)
-        for dim, fac in til.items():
+        for dim, fac in (tiling.get(lvl, {}) or {}).items():
             fac = int(fac)
-            vname = f"{dim.lower()}_{abbr}"
-            outer_loop_specs.append((vname, fac, f"{lvl} → {dim}:{fac}"))
+            k = level_ctr.get(abbr, 0); level_ctr[abbr] = k + 1
+            vname = f"{abbr}_{k}"
+            outer_loop_specs.append((vname, fac, f"{lvl}_{k} = {dim}:{fac}", dim))
+            if dim == "Q": outer_q_terms.append((vname, fac))
+            if dim == "P": outer_p_terms.append((vname, fac))
+            if dim == "M": outer_m_terms.append((vname, fac))
+            if dim == "C": outer_c_terms.append((vname, fac))
+            if dim == "S": outer_s_terms.append((vname, fac))
+
+    # OutRegister output dims (M,P,Q) act as additional output tile loops nested just
+    # outside the zero-init. This covers e.g. OutRegister M:10 in ex7-class mappings
+    # that have both DRAM M tiles and OutRegister M tiles simultaneously.
+    for dim, fac in (tiling.get("OutRegister", {}) or {}).items():
+        fac = int(fac)
+        if dim in _OUTPUT_DIMS:
+            k = level_ctr.get("or", 0); level_ctr["or"] = k + 1
+            vname = f"or_{k}"
+            outer_loop_specs.append((vname, fac, f"OutRegister_{k} = {dim}:{fac}", dim))
             if dim == "Q": outer_q_terms.append((vname, fac))
             if dim == "P": outer_p_terms.append((vname, fac))
             if dim == "M": outer_m_terms.append((vname, fac))
 
-    def _composite_tile_expr(terms):
-        if not terms:
-            return None, 1
-        total = 1
-        for _, f in terms:
-            total *= f
-        parts = []
-        remaining = total
-        for vname, f in terms:
-            remaining //= f
-            parts.append(vname if remaining == 1 else f"{vname} * {remaining}")
-        expr = " + ".join(parts)
-        return (f"({expr})" if len(parts) > 1 else expr), total
-
     outer_p_var, outer_p_factor = _composite_tile_expr(outer_p_terms)
     outer_q_var, outer_q_factor = _composite_tile_expr(outer_q_terms)
     outer_m_var, outer_m_factor = _composite_tile_expr(outer_m_terms)
+    outer_c_var, outer_c_factor = _composite_tile_expr(outer_c_terms)
+    outer_s_var, outer_s_factor = _composite_tile_expr(outer_s_terms)
 
-    # Synthetic outer M tile loop
     M_tiles = (M + N_M_sp - 1) // N_M_sp
     if M_tiles > 1 and outer_m_var is None:
         outer_m_var = "m_tile"
-        outer_loop_specs.insert(0, ("m_tile", M_tiles, "M tile (synthetic outer loop)"))
+        outer_loop_specs.insert(0, ("m_tile", M_tiles, "M tile (synthetic outer loop)", "M"))
 
-    # ---- Inner sequential loops (WRegister / InRegister) ----
-    inner_loop_specs = []  # [(varname, factor, comment)]
-    inner_r_var = None
-    inner_c_var = None
-    inner_c_factor = 1
+    outer_out_specs = [(v, f, c, dm) for v, f, c, dm in outer_loop_specs if dm in _OUTPUT_DIMS]
+    outer_red_specs = [(v, f, c, dm) for v, f, c, dm in outer_loop_specs if dm not in _OUTPUT_DIMS]
+
+    inner_loop_specs: list = []
+    inner_r_var = None; inner_c_var = None; inner_c_factor = 1
     for lvl in inner_mem:
-        til = tiling.get(lvl, {})
-        for dim, fac in til.items():
+        for dim, fac in (tiling.get(lvl, {}) or {}).items():
             fac = int(fac)
-            vname = dim.lower()
-            if dim == "C":
-                vname = "c_seq"
-                inner_c_var = "c_seq"
-                inner_c_factor = fac
+            vname = "c_seq" if dim == "C" else dim.lower()
+            if dim == "C": inner_c_var = "c_seq"; inner_c_factor = fac
             inner_loop_specs.append((vname, fac, f"{lvl} → {dim}:{fac}"))
             if dim == "R": inner_r_var = vname
 
-    # ---- SARows (unrolled reduction dims: C, S) ----
     sarows_til = tiling.get("SARows", {}) or {}
     C_sa = int(sarows_til.get("C", 1))
     S_sa = int(sarows_til.get("S", 1))
 
-    # ---- Build code ----
-    kind = "SA (weight-preload)" if unroll else "seq (all-nounroll)"
-    code = [hdr, sig, "{"]
-    code.append(f"    // {kind} Eyeriss CONV -- loop structure mirrors FF mapping hierarchy")
-    code.append(f"    const int M={M}, P={P}, Q={Q}, C={C}, R={R}, S={S};")
-    code.append(f"    const int H={H}, W={W};")
-    code.append(f"    const int Ptiles={Ptiles}, Qtiles={Qtiles};")
-    code.append(f"    const int in_banks={in_banks};")
-    code.append("")
+    return _SACtx(
+        M=M, P=P, Q=Q, C=C, R=R, S=S, H=H, W=W,
+        in_banks=bank.in_banks,
+        spec=spec, lvars=lvars,
+        N_M_sp=N_M_sp, N_Q_sp=N_Q_sp, N_P_sp=N_P_sp,
+        Ptiles=Ptiles, Qtiles=Qtiles,
+        outer_out_specs=outer_out_specs, outer_red_specs=outer_red_specs,
+        outer_q_var=outer_q_var, outer_q_factor=outer_q_factor,
+        outer_p_var=outer_p_var, outer_p_factor=outer_p_factor,
+        outer_m_var=outer_m_var, outer_m_factor=outer_m_factor,
+        outer_c_var=outer_c_var, outer_c_factor=outer_c_factor,
+        outer_s_var=outer_s_var, outer_s_factor=outer_s_factor,
+        inner_loop_specs=inner_loop_specs,
+        inner_r_var=inner_r_var, inner_c_var=inner_c_var, inner_c_factor=inner_c_factor,
+        C_sa=C_sa, S_sa=S_sa,
+    )
+
+
+def _emit_acc_decl(ctx: _SACtx, unroll: bool) -> List[str]:
+    """Accumulator declaration (function-scope, before outer loops)."""
+    spec = ctx.spec
+    shape_str = "".join(f"[{f}]" for _, f, _ in spec.all_dims)
     if unroll:
-        for comment in spec.loop_var_comments():
-            code.append(f"    {comment}")
-        code.append(f"    // {spec.N_PE} PE accumulators: acc{shape_str}")
-        code.append(f"    DTYPE acc{shape_str};")
+        lines = [f"    {c}" for c in spec.loop_var_comments()]
+        lines.append(f"    // {spec.N_PE} PE accumulators: acc{shape_str}")
+        lines.append(f"    DTYPE acc{shape_str};")
     else:
-        # Flat accumulator for sequential path — GCC SROA at -O3 → scalar regs
-        code.append(f"    // Accumulator: flat 1D at function scope → GCC SROA → {spec.N_out} scalar regs")
-        code.append(f"    DTYPE acc[{spec.N_out}];")
+        lines = [
+            f"    // Accumulator: flat 1D at function scope → GCC SROA → {spec.N_out} scalar regs",
+            f"    DTYPE acc[{spec.N_out}];",
+        ]
+    return lines
+
+
+def _emit_acc_init(ctx: _SACtx, unroll: bool, indent: str) -> List[str]:
+    """Zero-init block, emitted inside the outer OUTPUT loops."""
+    spec = ctx.spec; lvars = ctx.lvars
+    lines = []
+    if unroll:
+        lines.append(f"{indent}// Zero {spec.N_PE} PE accumulators (nounroll — non-spatial init)")
+        cur = indent
+        for var, (_, fac, _) in zip(lvars, spec.all_dims):
+            lines += [f"{cur}#pragma GCC nounroll",
+                      f"{cur}for (int {var} = 0; {var} < {fac}; ++{var}) {{"]
+            cur += "  "
+        lines.append(f"{cur}acc{''.join(f'[{v}]' for v in lvars)} = 0.0f;")
+        for _ in spec.all_dims:
+            cur = cur[:-2]; lines.append(f"{cur}}}")
+    else:
+        lines += [
+            f"{indent}// Zero accumulator (nounroll — non-spatial init)",
+            f"{indent}#pragma GCC nounroll",
+            f"{indent}for (int _i = 0; _i < {spec.N_out}; ++_i) acc[_i] = 0.0f;",
+        ]
+    return lines
+
+
+def _emit_sa_compute_body(ctx: _SACtx, r_var: str, indent: str) -> List[str]:
+    """Phase 1 (weight preload) + Phase 2a (multiply) + Phase 2b (accumulate)."""
+    spec = ctx.spec; lvars = ctx.lvars
+    lines = []
+
+    c_sa_pairs  = [(v, f) for v, (dm, f, _) in zip(lvars, spec.all_dims) if dm == 'C']
+    s_sa_pairs  = [(v, f) for v, (dm, f, _) in zip(lvars, spec.all_dims) if dm == 'S']
+    m_sa_pairs  = [(v, f) for v, (dm, f, _) in zip(lvars, spec.all_dims) if dm == 'M']
+    q_sa_pairs  = [(v, f) for v, (dm, f, _) in zip(lvars, spec.all_dims) if dm == 'Q']
+    non_q_pairs = [(v, f) for v, (dm, f, _) in zip(lvars, spec.all_dims) if dm != 'Q']
+
+    C_sa_total = math.prod(f for _, f in c_sa_pairs) if c_sa_pairs else 1
+    N_M_sp     = math.prod(f for _, f in m_sa_pairs) if m_sa_pairs else 1
+    N_Q_sp     = math.prod(f for _, f in q_sa_pairs) if q_sa_pairs else 1
+
+    c_flat = _mixed_radix(c_sa_pairs) if c_sa_pairs else "0"
+    s_flat = _mixed_radix(s_sa_pairs) if s_sa_pairs else "0"
+    q_flat = _mixed_radix(q_sa_pairs) if q_sa_pairs else "0"
+    m_flat = _mixed_radix(m_sa_pairs) if m_sa_pairs else "0"
+
+    c_inner = (f"({ctx.inner_c_var} * {C_sa_total} + ({c_flat}))"
+               if ctx.inner_c_var else f"({c_flat})")
+    c_global_expr = (f"({ctx.outer_c_var} * {ctx.inner_c_factor * C_sa_total} + {c_inner[1:-1]})"
+                     if ctx.outer_c_var else c_inner)
+
+    S_sa_total   = math.prod(f for _, f in s_sa_pairs) if s_sa_pairs else 1
+    s_total_expr = (f"({ctx.outer_s_var} * {S_sa_total} + ({s_flat}))"
+                    if ctx.outer_s_var else s_flat)
+    m_total_expr = (f"({ctx.outer_m_var} * {N_M_sp} + ({m_flat}))"
+                    if ctx.outer_m_var else f"({m_flat})")
+
+    w_shape   = "".join(f"[{f}]" for _, f in non_q_pairs)
+    w_idx_str = "".join(f"[{v}]" for v, _ in non_q_pairs)
+    n_w_elems = math.prod(f for _, f in non_q_pairs) if non_q_pairs else 1
+    p_shape   = "".join(f"[{f}]" for _, f, _ in spec.all_dims)
+    p_idx_str = "".join(f"[{v}]" for v in lvars)
+
+    # ---- Phase 1: preload weights (non-Q SA dims only) ----
+    lines += [
+        f"{indent}// ---- Phase 1: preload weights — {n_w_elems} elems, no Q loop ----",
+        f"{indent}// w_tile{w_shape}: level-indexed, Q absent (weight is Q-independent)",
+        f"{indent}DTYPE w_tile{w_shape};",
+    ]
+    pre = indent
+    for v, f in non_q_pairs:
+        lines += [f"{pre}#pragma GCC unroll {f}", f"{pre}for (int {v} = 0; {v} < {f}; ++{v}) {{"]
+        pre += "  "
+    lines += [
+        f"{pre}int c_global = {c_global_expr};",
+        f"{pre}int c_bank = c_global & 1;",
+        f"{pre}int c_blk  = c_global >> 1;",
+        f"{pre}int w_idx = ({m_total_expr} * ((C + in_banks - 1) / in_banks) + c_blk) * (R * S) + {r_var} * S + {s_total_expr};",
+        f"{pre}w_tile{w_idx_str} = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];",
+    ]
+    for v, _ in reversed(non_q_pairs):
+        pre = pre[:-2]; lines.append(f"{pre}}}  // {v} (preload)")
+    lines.append("")
+
+    # ---- Phase 2a: multiply — N_PE independent products ----
+    lines += [
+        f"{indent}// ---- Phase 2a: multiply — {spec.N_PE} independent products ----",
+        f"{indent}// p{p_shape}: GCC SROA → {spec.N_PE} scalar float regs",
+        f"{indent}DTYPE p{p_shape};",
+        f"{indent}int q_base = {ctx.outer_q_var} * {N_Q_sp};" if ctx.outer_q_var else f"{indent}int q_base = 0;",
+    ]
+    p2a = indent
+    for v, (dm, f, _) in zip(lvars, spec.all_dims):
+        lines += [f"{p2a}#pragma GCC unroll {f}", f"{p2a}for (int {v} = 0; {v} < {f}; ++{v}) {{  // {dm}:{f}"]
+        p2a += "  "
+    p_row = f"({ctx.outer_p_var} + {r_var})" if ctx.outer_p_var else r_var
+    lines += [
+        f"{p2a}int c_global = {c_global_expr};",
+        f"{p2a}int c_bank = c_global & 1;",
+        f"{p2a}int c_blk  = c_global >> 1;",
+        f"{p2a}int in_c_base = c_blk * (H * W);",
+        f"{p2a}int in_row_base = in_c_base + {p_row} * W;",
+        f"{p2a}int in_col = q_base + {q_flat} + {s_total_expr};",
+        f"{p2a}DTYPE wv = w_tile{w_idx_str};",
+        f"{p2a}DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]",
+        f"{p2a}                        : dram_in_b1[in_row_base + in_col];",
+        f"{p2a}p{p_idx_str} = wv * inv;",
+    ]
+    for v, (dm, f, _) in reversed(list(zip(lvars, spec.all_dims))):
+        p2a = p2a[:-2]; lines.append(f"{p2a}}}  // {v} ({dm}:{f})")
+    lines.append("")
+
+    # ---- Phase 2b: accumulate — N_PE independent, no RAW chain ----
+    lines.append(f"{indent}// ---- Phase 2b: accumulate — {spec.N_PE} independent, no RAW chain ----")
+    p2b = indent
+    for v, (dm, f, _) in zip(lvars, spec.all_dims):
+        lines += [f"{p2b}#pragma GCC unroll {f}", f"{p2b}for (int {v} = 0; {v} < {f}; ++{v}) {{"]
+        p2b += "  "
+    lines.append(f"{p2b}acc{p_idx_str} += p{p_idx_str};")
+    for v, (dm, f, _) in reversed(list(zip(lvars, spec.all_dims))):
+        p2b = p2b[:-2]; lines.append(f"{p2b}}}  // {v}")
+    lines.append("")
+
+    return lines
+
+
+def _emit_seq_compute_body(ctx: _SACtx, r_var: str, indent: str) -> List[str]:
+    """Sequential compute body: all-nounroll, inline weight read from DRAM."""
+    spec = ctx.spec; lvars = ctx.lvars
+    lines = []
+
+    out_loop_vars_f = [(v, f) for v, (dm, f, _) in zip(lvars, spec.all_dims) if dm in {'M', 'P', 'Q'}]
+    bank_expr  = _mixed_radix(out_loop_vars_f)
+    m_sa_pairs = [(v, f) for v, (dm, f, _) in zip(lvars, spec.all_dims) if dm == 'M']
+    q_sa_pairs = [(v, f) for v, (dm, f, _) in zip(lvars, spec.all_dims) if dm == 'Q']
+    m_flat     = _mixed_radix(m_sa_pairs) if m_sa_pairs else "0"
+    q_flat     = _mixed_radix(q_sa_pairs) if q_sa_pairs else "0"
+    N_M_sp_seq = math.prod(f for _, f in m_sa_pairs) if m_sa_pairs else 1
+    m_total    = (f"({ctx.outer_m_var} * {N_M_sp_seq} + ({m_flat}))"
+                  if ctx.outer_m_var else (m_flat if m_flat != "0" else "0"))
+    s_seq_expr = f"({ctx.outer_s_var} * {ctx.S_sa} + s)" if ctx.outer_s_var else "s"
+
+    def _c_setup(ind):
+        """Emit c_bank/c_blk/in_c_base/q_base lines inside the c loop."""
+        if ctx.outer_c_var or ctx.inner_c_var:
+            parts = []
+            if ctx.outer_c_var: parts.append(f"{ctx.outer_c_var} * {ctx.inner_c_factor * ctx.C_sa}")
+            if ctx.inner_c_var: parts.append(f"{ctx.inner_c_var} * {ctx.C_sa}")
+            parts.append("c")
+            lines.extend([f"{ind}  int c_global = {' + '.join(parts)};",
+                           f"{ind}  int c_bank = c_global & 1;",
+                           f"{ind}  int c_blk  = c_global >> 1;"])
+        else:
+            lines.extend([f"{ind}  int c_bank = c & 1;", f"{ind}  int c_blk  = c >> 1;"])
+        lines.append(f"{ind}  int in_c_base = c_blk * (H * W);")
+        q_rhs = f"{ctx.outer_q_var} * {ctx.N_Q_sp}" if ctx.outer_q_var else "0"
+        lines.append(f"{ind}  int q_base = {q_rhs};")
+
+    p_row = f"({ctx.outer_p_var} + {r_var})" if ctx.outer_p_var else r_var
+
+    lines += [
+        f"{indent}// SARows C:{ctx.C_sa} -- sequential (reduction)",
+        f"{indent}#pragma GCC nounroll",
+        f"{indent}for (int c = 0; c < {ctx.C_sa}; ++c) {{",
+    ]
+    _c_setup(indent)
+    lines += [
+        "",
+        f"{indent}  // SARows S:{ctx.S_sa}",
+        f"{indent}  #pragma GCC nounroll",
+        f"{indent}  for (int s = 0; s < {ctx.S_sa}; ++s) {{",
+    ]
+    seq = indent + "    "
+    for (var, fac), (dim, _, _) in zip(out_loop_vars_f, spec.out_dims):
+        lines += [f"{seq}#pragma GCC nounroll",
+                  f"{seq}for (int {var} = 0; {var} < {fac}; ++{var}) {{  // {dim}:{fac}"]
+        seq += "  "
+    lines += [
+        f"{seq}int w_idx = (({m_total}) * ((C + in_banks - 1) / in_banks) + c_blk) * (R * S) + {r_var} * S + {s_seq_expr};",
+        f"{seq}DTYPE wv = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];",
+        f"{seq}int in_row_base = in_c_base + {p_row} * W;",
+        f"{seq}int in_col = q_base + {q_flat} + {s_seq_expr};",
+        f"{seq}DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]",
+        f"{seq}                        : dram_in_b1[in_row_base + in_col];",
+        f"{seq}acc[{bank_expr}] += wv * inv;",
+    ]
+    for (var, fac), (dim, _, _) in reversed(list(zip(out_loop_vars_f, spec.out_dims))):
+        seq = seq[:-2]; lines.append(f"{seq}}}  // {var} ({dim}:{fac})")
+    lines += [f"{indent}  }}  // s", f"{indent}}}  // c", ""]
+    return lines
+
+
+def _emit_reduction_tree_block(ctx: _SACtx, indent: str) -> List[str]:
+    """Scalar reduction tree: N_PE accumulators → N_out outputs."""
+    spec = ctx.spec; lvars = ctx.lvars
+    out_vars      = [v for v, (dm, _, _) in zip(lvars, spec.all_dims) if dm in {'M', 'P', 'Q'}]
+    red_positions = [i for i, (dm, _, _) in enumerate(spec.all_dims) if dm not in {'M', 'P', 'Q'}]
+    out_positions = [i for i, (dm, _, _) in enumerate(spec.all_dims) if dm in {'M', 'P', 'Q'}]
+    red_factors   = [spec.all_dims[i][1] for i in red_positions]
+
+    lines = [
+        f"{indent}// ---- reduction: {spec.N_PE} acc → {spec.N_out} outputs ({spec.N_red} inputs each) ----",
+        f"{indent}DTYPE reduced{''.join(f'[{f}]' for _, f, _ in spec.out_dims)};",
+    ]
+    red = indent
+    for var, (dim, fac, _) in zip(out_vars, spec.out_dims):
+        lines += [f"{red}#pragma GCC unroll {fac}", f"{red}for (int {var} = 0; {var} < {fac}; ++{var}) {{"]
+        red += "  "
+
+    values = []
+    for combo in iprod(*[range(f) for f in red_factors]):
+        idx = ["?"] * len(spec.all_dims)
+        for k, i in enumerate(red_positions): idx[i] = str(combo[k])
+        for k, i in enumerate(out_positions): idx[i] = out_vars[k]
+        values.append(f"acc{''.join(f'[{x}]' for x in idx)}")
+
+    stmts, final = _scalar_tree(values)
+    for s in stmts:
+        lines.append(f"{red}{s}")
+    lines.append(f"{red}reduced{''.join(f'[{v}]' for v in out_vars)} = {final};")
+
+    for var, (dim, fac, _) in reversed(list(zip(out_vars, spec.out_dims))):
+        red = red[:-2]; lines.append(f"{red}}}  // {var} (reduction)")
+    lines.append("")
+    return lines
+
+
+def _emit_writeback_block(ctx: _SACtx, unroll: bool, indent: str) -> List[str]:
+    """Write reduced/accumulated values to banked output DRAM ports."""
+    spec = ctx.spec; lvars = ctx.lvars
+    out_loop_vars_f = [(v, f) for v, (dm, f, _) in zip(lvars, spec.all_dims) if dm in {'M', 'P', 'Q'}]
+    bank_expr = _mixed_radix(out_loop_vars_f)
+    cm_expr   = f"{ctx.outer_m_var}" if ctx.outer_m_var else "0"
+    cp_expr   = f"{ctx.outer_p_var}" if ctx.outer_p_var else "0"
+    cq_expr   = f"{ctx.outer_q_var}" if ctx.outer_q_var else "0"
+    pragma    = "unroll" if unroll else "nounroll"
+    val_expr  = f"reduced{''.join(f'[{v}]' for v, _ in out_loop_vars_f)}" if unroll else f"acc[{bank_expr}]"
+
+    lines = [f"{indent}// OutRegister: write acc to banked output ports"]
+    wb = indent
+    for (var, fac), (dim, _, _) in zip(out_loop_vars_f, spec.out_dims):
+        lines += [f"{wb}#pragma GCC {pragma} {fac}", f"{wb}for (int {var} = 0; {var} < {fac}; ++{var}) {{"]
+        wb += "  "
+    lines += [
+        f"{wb}int out_bank = {bank_expr};",
+        f"{wb}int cm = {cm_expr};",
+        f"{wb}int cp = {cp_expr};",
+        f"{wb}int cq = {cq_expr};",
+        f"{wb}int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;",
+        f"{wb}DTYPE v = {val_expr};",
+        _emit_out_store_switch_fixed("out_bank", spec.N_out, "out_idx_b", "v", wb),
+    ]
+    for _ in out_loop_vars_f:
+        wb = wb[:-2]; lines.append(f"{wb}}}")
+    return lines
+
+
+def _emit_top_level_sa(mapping: MappingInfo, bank: ConvBankSpec, unroll: bool = True) -> str:
+    """
+    Generalized SA-shaped kernel (Option B).
+    unroll=True  → SA path: weight preload (Phase 1) + multiply (2a) + accumulate (2b) + reduction tree.
+    unroll=False → SEQ path: all-nounroll, inline weight reads, no preload.
+    Loop structure mirrors the FF mapping hierarchy directly.
+    """
+    ctx  = _build_sa_ctx(mapping, bank)
+    kind = "SA (weight-preload)" if unroll else "seq (all-nounroll)"
+
+    code = [_emit_headers_and_pragmas(ctx.spec.N_out), _emit_top_signature(ctx.spec.N_out), "{"]
+    code += [
+        f"    // {kind} Eyeriss CONV — loop structure mirrors FF mapping hierarchy",
+        f"    const int M={ctx.M}, P={ctx.P}, Q={ctx.Q}, C={ctx.C}, R={ctx.R}, S={ctx.S};",
+        f"    const int H={ctx.H}, W={ctx.W};",
+        f"    const int Ptiles={ctx.Ptiles}, Qtiles={ctx.Qtiles};",
+        f"    const int in_banks={ctx.in_banks};",
+        "",
+    ]
+    code.extend(_emit_acc_decl(ctx, unroll))
     code.append("")
 
     indent = "    "
 
-    # -- Outer temporal loops (all nounroll — temporal, not spatial) --
-    for vname, fac, cmt in outer_loop_specs:
-        code.append(f"{indent}// {cmt}")
-        code.append(f"{indent}#pragma GCC nounroll")
-        code.append(f"{indent}for (int {vname} = 0; {vname} < {fac}; ++{vname}) {{")
+    # Outer output loops (M,P,Q) — wrap zero-init and write-back
+    for vname, fac, cmt, _dim in ctx.outer_out_specs:
+        code += [f"{indent}// {cmt}", f"{indent}#pragma GCC nounroll",
+                 f"{indent}for (int {vname} = 0; {vname} < {fac}; ++{vname}) {{"]
         indent += "  "
 
-    # -- Accumulator init (nounroll — non-spatial init) --
-    if unroll:
-        code.append(f"{indent}// Zero {spec.N_PE} PE accumulators (nounroll — non-spatial init)")
-        cur_indent = indent
-        for var, (_, fac, _) in zip(lvars, spec.all_dims):
-            code.append(f"{cur_indent}#pragma GCC nounroll")
-            code.append(f"{cur_indent}for (int {var} = 0; {var} < {fac}; ++{var}) {{")
-            cur_indent += "  "
-        inner_acc_ref = "".join(f"[{v}]" for v in lvars)
-        code.append(f"{cur_indent}acc{inner_acc_ref} = 0.0f;")
-        for _ in spec.all_dims:
-            cur_indent = cur_indent[:-2]
-            code.append(f"{cur_indent}}}")
-        # acc_flat removed: write-back now reads from reduced[] (Phase 5)
-    else:
-        code.append(f"{indent}// Zero accumulator (nounroll — non-spatial init)")
-        code.append(f"{indent}#pragma GCC nounroll")
-        code.append(f"{indent}for (int _i = 0; _i < {spec.N_out}; ++_i) acc[_i] = 0.0f;")
+    code.extend(_emit_acc_init(ctx, unroll, indent))
     code.append("")
 
-    # -- Inner sequential loops (WRegister C, R, etc.) — all nounroll --
-    for vname, fac, cmt in inner_loop_specs:
-        code.append(f"{indent}// {cmt} (sequential)")
-        code.append(f"{indent}#pragma GCC nounroll")
-        code.append(f"{indent}for (int {vname} = 0; {vname} < {fac}; ++{vname}) {{")
+    # Outer reduction loops (C,S,R) — accumulate without resetting the accumulator
+    for vname, fac, cmt, _dim in ctx.outer_red_specs:
+        code += [f"{indent}// {cmt}", f"{indent}#pragma GCC nounroll",
+                 f"{indent}for (int {vname} = 0; {vname} < {fac}; ++{vname}) {{"]
         indent += "  "
 
-    if inner_r_var:
-        r_var = inner_r_var
-    else:
-        r_var = "r"
+    # Inner sequential loops (WRegister, InRegister)
+    for vname, fac, cmt in ctx.inner_loop_specs:
+        code += [f"{indent}// {cmt} (sequential)", f"{indent}#pragma GCC nounroll",
+                 f"{indent}for (int {vname} = 0; {vname} < {fac}; ++{vname}) {{"]
+        indent += "  "
+
+    r_var = ctx.inner_r_var or "r"
+    if not ctx.inner_r_var:
         code.append(f"{indent}int r = 0;  // R=1 or no inner sequential R loop")
 
-    # Helper: emit the c_bank/c_blk/q_base setup lines for either preload or compute
-    def _emit_c_setup(ind, need_in_base=True, need_q_base=True):
-        if inner_c_var:
-            code.append(f"{ind}  int c_global = {inner_c_var} * {C_sa} + c;")
-            code.append(f"{ind}  int c_bank = c_global & 1;")
-            code.append(f"{ind}  int c_blk  = c_global >> 1;")
-        else:
-            code.append(f"{ind}  int c_bank = c & 1;")
-            code.append(f"{ind}  int c_blk  = c >> 1;")
-        if need_in_base:
-            code.append(f"{ind}  int in_c_base = c_blk * (H * W);")
-        if need_q_base:
-            if outer_q_var:
-                code.append(f"{ind}  int q_base = {outer_q_var} * {N_Q_sp};")
-            else:
-                code.append(f"{ind}  int q_base = 0;")
+    code.extend(_emit_sa_compute_body(ctx, r_var, indent) if unroll
+                else _emit_seq_compute_body(ctx, r_var, indent))
 
-    def _w_idx_expr(r_v, s_v, ml_v=None):
-        mt = f"({outer_m_var} * {N_M_sp} + {ml_v})" if outer_m_var else (ml_v or "ml")
-        return f"({mt} * ((C + in_banks - 1) / in_banks) + c_blk) * (R * S) + {r_v} * S + {s_v}"
-
-    if unroll:
-        # ---- Precompute address groupings from spec ----
-        non_q_pairs = [(v, f) for v, (d, f, _) in zip(lvars, spec.all_dims) if d != 'Q']
-        c_sa_pairs  = [(v, f) for v, (d, f, _) in zip(lvars, spec.all_dims) if d == 'C']
-        s_sa_pairs  = [(v, f) for v, (d, f, _) in zip(lvars, spec.all_dims) if d == 'S']
-        m_sa_pairs  = [(v, f) for v, (d, f, _) in zip(lvars, spec.all_dims) if d == 'M']
-        q_sa_pairs  = [(v, f) for v, (d, f, _) in zip(lvars, spec.all_dims) if d == 'Q']
-
-        C_sa_total = math.prod(f for _, f in c_sa_pairs) if c_sa_pairs else 1
-        N_M_sp     = math.prod(f for _, f in m_sa_pairs) if m_sa_pairs else 1
-        N_Q_sp     = math.prod(f for _, f in q_sa_pairs) if q_sa_pairs else 1
-
-        c_flat_expr = _mixed_radix(c_sa_pairs) if c_sa_pairs else "0"
-        s_flat_expr = _mixed_radix(s_sa_pairs) if s_sa_pairs else "0"
-        q_flat_expr = _mixed_radix(q_sa_pairs) if q_sa_pairs else "0"
-        m_flat_expr = _mixed_radix(m_sa_pairs) if m_sa_pairs else "0"
-
-        if inner_c_var:
-            c_global_expr = f"({inner_c_var} * {C_sa_total} + ({c_flat_expr}))"
-        else:
-            c_global_expr = f"({c_flat_expr})"
-
-        if outer_m_var:
-            m_total_expr_sa = f"({outer_m_var} * {N_M_sp} + ({m_flat_expr}))"
-        else:
-            m_total_expr_sa = f"({m_flat_expr})"
-
-        w_shape   = "".join(f"[{f}]" for _, f in non_q_pairs)
-        w_idx_str = "".join(f"[{v}]" for v, _ in non_q_pairs)
-        n_w_elems = math.prod(f for _, f in non_q_pairs) if non_q_pairs else 1
-        p_idx_str = "".join(f"[{v}]" for v in lvars)
-
-        # ---- Phase 1: preload weights (non-Q SA dims only) ----
-        code.append(f"{indent}// ---- Phase 1: preload weights — {n_w_elems} elems, no Q loop ----")
-        code.append(f"{indent}// w_tile{w_shape}: level-indexed, Q absent (weight is Q-independent)")
-        code.append(f"{indent}DTYPE w_tile{w_shape};")
-        pre_ind = indent
-        for v, f in non_q_pairs:
-            code.append(f"{pre_ind}#pragma GCC unroll {f}")
-            code.append(f"{pre_ind}for (int {v} = 0; {v} < {f}; ++{v}) {{")
-            pre_ind += "  "
-        code.append(f"{pre_ind}int c_global = {c_global_expr};")
-        code.append(f"{pre_ind}int c_bank = c_global & 1;")
-        code.append(f"{pre_ind}int c_blk  = c_global >> 1;")
-        code.append(f"{pre_ind}int w_idx = ({m_total_expr_sa} * ((C + in_banks - 1) / in_banks) + c_blk) * (R * S) + {r_var} * S + {s_flat_expr};")
-        code.append(f"{pre_ind}w_tile{w_idx_str} = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];")
-        for v, _ in reversed(non_q_pairs):
-            pre_ind = pre_ind[:-2]
-            code.append(f"{pre_ind}}}  // {v} (preload)")
-        code.append("")
-
-        # ---- Phase 2a: multiply — N_PE independent products ----
-        code.append(f"{indent}// ---- Phase 2a: multiply — {spec.N_PE} independent products ----")
-        code.append(f"{indent}// p{shape_str}: GCC SROA → {spec.N_PE} scalar float regs")
-        code.append(f"{indent}DTYPE p{shape_str};")
-        if outer_q_var:
-            code.append(f"{indent}int q_base = {outer_q_var} * {N_Q_sp};")
-        else:
-            code.append(f"{indent}int q_base = 0;")
-        p2a_ind = indent
-        for v, (d, f, _) in zip(lvars, spec.all_dims):
-            code.append(f"{p2a_ind}#pragma GCC unroll {f}")
-            code.append(f"{p2a_ind}for (int {v} = 0; {v} < {f}; ++{v}) {{  // {d}:{f}")
-            p2a_ind += "  "
-        code.append(f"{p2a_ind}int c_global = {c_global_expr};")
-        code.append(f"{p2a_ind}int c_bank = c_global & 1;")
-        code.append(f"{p2a_ind}int c_blk  = c_global >> 1;")
-        code.append(f"{p2a_ind}int in_c_base = c_blk * (H * W);")
-        if outer_p_var:
-            p_row_expr_sa = f"({outer_p_var} + {r_var})"
-        else:
-            p_row_expr_sa = f"{r_var}"
-        code.append(f"{p2a_ind}int in_row_base = in_c_base + {p_row_expr_sa} * W;")
-        code.append(f"{p2a_ind}int in_col = q_base + {q_flat_expr} + {s_flat_expr};")
-        code.append(f"{p2a_ind}DTYPE wv = w_tile{w_idx_str};")
-        code.append(f"{p2a_ind}DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]")
-        code.append(f"{p2a_ind}                        : dram_in_b1[in_row_base + in_col];")
-        code.append(f"{p2a_ind}p{p_idx_str} = wv * inv;")
-        for v, (d, f, _) in reversed(list(zip(lvars, spec.all_dims))):
-            p2a_ind = p2a_ind[:-2]
-            code.append(f"{p2a_ind}}}  // {v} ({d}:{f})")
-        code.append("")
-
-        # ---- Phase 2b: accumulate — N_PE independent, no chain ----
-        code.append(f"{indent}// ---- Phase 2b: accumulate — {spec.N_PE} independent, no RAW chain ----")
-        p2b_ind = indent
-        for v, (d, f, _) in zip(lvars, spec.all_dims):
-            code.append(f"{p2b_ind}#pragma GCC unroll {f}")
-            code.append(f"{p2b_ind}for (int {v} = 0; {v} < {f}; ++{v}) {{")
-            p2b_ind += "  "
-        code.append(f"{p2b_ind}acc{p_idx_str} += p{p_idx_str};")
-        for v, (d, f, _) in reversed(list(zip(lvars, spec.all_dims))):
-            p2b_ind = p2b_ind[:-2]
-            code.append(f"{p2b_ind}}}  // {v}")
-        code.append("")
-
-    else:
-        # ---- Seq compute body (unchanged — all nounroll, inline weight read) ----
-        c_pragma  = "#pragma GCC nounroll"
-        s_pragma  = "#pragma GCC nounroll"
-        ml_pragma = "#pragma GCC nounroll"
-        ql_pragma = "#pragma GCC nounroll"
-
-        # SEQ: derive out_loop_vars from spec (FF order, same var names as SA)
-        out_loop_vars_f_seq = [(v, f) for v, (d, f, _) in zip(lvars, spec.all_dims)
-                               if d in {'M', 'P', 'Q'}]
-        bank_expr_seq = _mixed_radix(out_loop_vars_f_seq)
-        m_sa_pairs_seq = [(v, f) for v, (d, f, _) in zip(lvars, spec.all_dims) if d == 'M']
-        q_sa_pairs_seq = [(v, f) for v, (d, f, _) in zip(lvars, spec.all_dims) if d == 'Q']
-        m_flat_seq = _mixed_radix(m_sa_pairs_seq) if m_sa_pairs_seq else "0"
-        q_flat_seq = _mixed_radix(q_sa_pairs_seq) if q_sa_pairs_seq else "0"
-        N_M_sp_seq = math.prod(f for _, f in m_sa_pairs_seq) if m_sa_pairs_seq else 1
-        if outer_m_var:
-            m_total_seq = f"({outer_m_var} * {N_M_sp_seq} + ({m_flat_seq}))"
-        else:
-            m_total_seq = m_flat_seq if m_flat_seq != "0" else "0"
-
-        code.append(f"{indent}// SARows C:{C_sa} -- sequential (reduction)")
-        code.append(f"{indent}{c_pragma}")
-        code.append(f"{indent}for (int c = 0; c < {C_sa}; ++c) {{")
-        _emit_c_setup(indent, need_in_base=True, need_q_base=True)
-        code.append("")
-        code.append(f"{indent}  // SARows S:{S_sa}")
-        code.append(f"{indent}  {s_pragma}")
-        code.append(f"{indent}  for (int s = 0; s < {S_sa}; ++s) {{")
-        # Out dims loops in FF order (nounroll for SEQ)
-        seq_ind = indent + "    "
-        for (var, fac), (dim, _, _) in zip(out_loop_vars_f_seq, spec.out_dims):
-            code.append(f"{seq_ind}#pragma GCC nounroll")
-            code.append(f"{seq_ind}for (int {var} = 0; {var} < {fac}; ++{var}) {{  // {dim}:{fac}")
-            seq_ind += "  "
-        code.append(f"{seq_ind}int w_idx = (({m_total_seq}) * ((C + in_banks - 1) / in_banks) + c_blk) * (R * S) + {r_var} * S + s;")
-        code.append(f"{seq_ind}DTYPE wv = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];")
-        if outer_p_var:
-            p_row_expr_seq = f"({outer_p_var} + {r_var})"
-        else:
-            p_row_expr_seq = f"{r_var}"
-        code.append(f"{seq_ind}int in_row_base = in_c_base + {p_row_expr_seq} * W;")
-        code.append(f"{seq_ind}int in_col = q_base + {q_flat_seq} + s;")
-        code.append(f"{seq_ind}DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]")
-        code.append(f"{seq_ind}                        : dram_in_b1[in_row_base + in_col];")
-        code.append(f"{seq_ind}acc[{bank_expr_seq}] += wv * inv;")
-        for (var, fac), (dim, _, _) in reversed(list(zip(out_loop_vars_f_seq, spec.out_dims))):
-            seq_ind = seq_ind[:-2]
-            code.append(f"{seq_ind}}}  // {var} ({dim}:{fac})")
-        code.append(f"{indent}  }}  // s")
-        code.append(f"{indent}}}  // c")
-        code.append("")
-
-    # Close inner sequential loops
-    for _ in inner_loop_specs:
-        indent = indent[:-2]
-        code.append(f"{indent}}}  // inner seq")
+    for _ in ctx.inner_loop_specs:
+        indent = indent[:-2]; code.append(f"{indent}}}  // inner seq")
     code.append("")
 
-    # -- Reduction block (SA path only) --
-    if unroll:
-        out_loop_vars = [v for v, (d, _, __) in zip(lvars, spec.all_dims) if d in {'M', 'P', 'Q'}]
-        red_positions = [i for i, (d, _, __) in enumerate(spec.all_dims) if d not in {'M', 'P', 'Q'}]
-        out_positions = [i for i, (d, _, __) in enumerate(spec.all_dims) if d in {'M', 'P', 'Q'}]
-        red_factors   = [spec.all_dims[i][1] for i in red_positions]
-
-        reduced_shape = "".join(f"[{f}]" for _, f, _ in spec.out_dims)
-        out_idx_str   = "".join(f"[{v}]" for v in out_loop_vars)
-
-        code.append(f"{indent}// ---- reduction: {spec.N_PE} acc → {spec.N_out} outputs ({spec.N_red} inputs each) ----")
-        code.append(f"{indent}DTYPE reduced{reduced_shape};")
-        red_ind = indent
-        for var, (dim, fac, _) in zip(out_loop_vars, spec.out_dims):
-            code.append(f"{red_ind}#pragma GCC unroll {fac}")
-            code.append(f"{red_ind}for (int {var} = 0; {var} < {fac}; ++{var}) {{")
-            red_ind += "  "
-
-        # Build scalar tree input list: enumerate all reduction index combinations
-        values = []
-        for combo in iprod(*[range(f) for f in red_factors]):
-            idx = ["?"] * len(spec.all_dims)
-            for k, i in enumerate(red_positions):
-                idx[i] = str(combo[k])
-            for k, i in enumerate(out_positions):
-                idx[i] = out_loop_vars[k]
-            values.append(f"acc{''.join(f'[{x}]' for x in idx)}")
-
-        stmts, final = _scalar_tree(values)
-        for s in stmts:
-            code.append(f"{red_ind}{s}")
-        code.append(f"{red_ind}reduced{out_idx_str} = {final};")
-
-        for var, (dim, fac, _) in reversed(list(zip(out_loop_vars, spec.out_dims))):
-            red_ind = red_ind[:-2]
-            code.append(f"{red_ind}}}  // {var} (reduction)")
+    for _ in ctx.outer_red_specs:
+        indent = indent[:-2]; code.append(f"{indent}}}  // outer_red")
+    if ctx.outer_red_specs:
         code.append("")
 
-    # -- Output write --
-    code.append(f"{indent}// OutRegister: write acc to banked output ports")
     if unroll:
-        # SA path: FF-order out_loop_vars, direct reduced[] subscript — no ml/ql decomposition
-        out_loop_vars_f = [(v, f) for v, (d, f, _) in zip(lvars, spec.all_dims)
-                           if d in {'M', 'P', 'Q'}]
-        bank_expr = _mixed_radix(out_loop_vars_f)
-        cm_expr = f"{outer_m_var}" if outer_m_var else "0"
-        cq_expr = f"{outer_q_var}" if outer_q_var else "0"
-        cp_expr = f"{outer_p_var}" if outer_p_var else "0"
-        wb_ind = indent
-        for (var, fac), (dim, _, _) in zip(out_loop_vars_f, spec.out_dims):
-            code.append(f"{wb_ind}#pragma GCC unroll {fac}")
-            code.append(f"{wb_ind}for (int {var} = 0; {var} < {fac}; ++{var}) {{")
-            wb_ind += "  "
-        code.append(f"{wb_ind}int out_bank = {bank_expr};")
-        code.append(f"{wb_ind}int cm = {cm_expr};")
-        code.append(f"{wb_ind}int cp = {cp_expr};")
-        code.append(f"{wb_ind}int cq = {cq_expr};")
-        code.append(f"{wb_ind}int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;")
-        out_idx = "".join(f"[{v}]" for v, _ in out_loop_vars_f)
-        code.append(f"{wb_ind}DTYPE v = reduced{out_idx};")
-        code.append(_emit_out_store_switch_fixed("out_bank", spec.N_out,
-                                                 "out_idx_b", "v", wb_ind))
-        for _ in out_loop_vars_f:
-            wb_ind = wb_ind[:-2]
-            code.append(f"{wb_ind}}}")
-    else:
-        # SEQ path: FF-order out_loop_vars, direct acc[bank_expr] — no ml/ql
-        out_loop_vars_f_wb = [(v, f) for v, (d, f, _) in zip(lvars, spec.all_dims)
-                              if d in {'M', 'P', 'Q'}]
-        bank_expr_wb = _mixed_radix(out_loop_vars_f_wb)
-        cm_expr = f"{outer_m_var}" if outer_m_var else "0"
-        cq_expr = f"{outer_q_var}" if outer_q_var else "0"
-        cp_expr = f"{outer_p_var}" if outer_p_var else "0"
-        wb_ind = indent
-        for (var, fac), (dim, _, _) in zip(out_loop_vars_f_wb, spec.out_dims):
-            code.append(f"{wb_ind}#pragma GCC nounroll")
-            code.append(f"{wb_ind}for (int {var} = 0; {var} < {fac}; ++{var}) {{")
-            wb_ind += "  "
-        code.append(f"{wb_ind}int out_bank = {bank_expr_wb};")
-        code.append(f"{wb_ind}int cm = {cm_expr};")
-        code.append(f"{wb_ind}int cp = {cp_expr};")
-        code.append(f"{wb_ind}int cq = {cq_expr};")
-        code.append(f"{wb_ind}int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;")
-        code.append(f"{wb_ind}DTYPE v = acc[{bank_expr_wb}];")
-        code.append(_emit_out_store_switch_fixed("out_bank", spec.N_out,
-                                                 "out_idx_b", "v", wb_ind))
-        for _ in out_loop_vars_f_wb:
-            wb_ind = wb_ind[:-2]
-            code.append(f"{wb_ind}}}")
+        code.extend(_emit_reduction_tree_block(ctx, indent))
 
-    # Close outer temporal loops
-    for _ in outer_loop_specs:
-        indent = indent[:-2]
-        code.append(f"{indent}}}  // outer")
+    code.extend(_emit_writeback_block(ctx, unroll, indent))
 
-    code.append("}")
-    code.append("")
+    for _ in ctx.outer_out_specs:
+        indent = indent[:-2]; code.append(f"{indent}}}  // outer_out")
+
+    code += ["}", ""]
     return "\n".join(code)
 
 

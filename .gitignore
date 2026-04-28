@@ -6,3 +6,4 @@ papers/
 **/HLS_output/
 src/.calibration_tmp/
 *.log
+*.v

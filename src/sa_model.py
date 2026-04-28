@@ -61,10 +61,12 @@ def parse_sa_c(text: str) -> dict:
         r'#pragma GCC nounroll\s+for\s*\([^;]+;\s*\w+\s*<\s*(\d+)', outer_region)]
     n_outer = math.prod(outer_bounds) if outer_bounds else 1
 
-    if wreg_pos != -1 and phase1_pos != -1:
-        inner_region = text[wreg_pos:phase1_pos]
+    if zero_pos != -1 and phase1_pos != -1:
+        inner_region = text[zero_pos:phase1_pos]
+        # Exclude zero-init loops (sarows_* / sacols_*); capture all other nounroll loops
         inner_bounds = [int(b) for b in re.findall(
-            r'#pragma GCC nounroll\s+for\s*\([^;]+;\s*\w+\s*<\s*(\d+)', inner_region)]
+            r'#pragma GCC nounroll\s+for\s*\(\s*int\s+(?!sarows_|sacols_)\w[^;]+;\s*\w+\s*<\s*(\d+)',
+            inner_region)]
     else:
         inner_bounds = []
 
@@ -83,8 +85,8 @@ def parse_sa_c(text: str) -> dict:
         if m2:
             sa_dims[label] = int(m2.group(1))
 
-    # Which sarows variable carries the bank bit: c_global = (sarows_X)
-    m2 = re.search(r'int c_global\s*=\s*\((\w+)\)', p2a_text)
+    # Which sarows variable carries the bank bit (may be inside a complex expression)
+    m2 = re.search(r'int c_global\s*=[^;]+?(sarows_\d+)', p2a_text)
     c_global_var = m2.group(1) if m2 else None   # 'sarows_0' or 'sarows_1'
 
     # Does sarows_0 appear in the in_col formula? (presence of a filter-height S dim)
@@ -102,30 +104,31 @@ def parse_sa_c(text: str) -> dict:
 # Analytical body_const derivation
 # =============================================================================
 
-def compute_body_const(params: dict) -> int | None:
+def compute_body_const(params: dict) -> int:
     """
     Derive body_const analytically from Phase 2a structure.
 
-    body_const = non-FP states in the r-loop body
-               = reads_bottleneck + overhead
-               = max(weight_reads_bank0, input_reads_bank0)
-                 + 9                          [setup + 7-state mul + READ_COND]
-                 + 4 * max(0, n_seq - 1)      [extra phi/prologue per sequential dim]
-                 + 2 * (weight == input)      [tied-bank sync cost]
+    For n_seq >= 1 (inner r-loop kernels):
+      body_const = reads_bottleneck + 9 + 4*(n_seq-1) + 2*(weight==input)
+      where reads_bottleneck = max(weight_reads_bank0, input_reads_bank0)
+      9 = fixed r-loop overhead (setup + mul-chain + READ_COND)
+      4*(n_seq-1) = extra phi/prologue per extra sequential dimension
+      2*(tie) = tied-bank sync cost
 
-    Returns None for n_seq_loops==0 (outer-body kernels need calib or manual value).
+    For n_seq == 0 (outer-body kernels, ex4-type):
+      body_const = reads_bottleneck + N_out + 4 + 2*(weight==input)
+      N_out is added because writes are inside body (no post_rloop for is_ex4=1).
+      4 = fixed outer-body control overhead (no r-loop READ_COND).
 
-    Verified on ex1-ex6:
-      ex1(bc=33) ex2(bc=23) ex3(bc=33) ex4(n/a) ex5(bc=33) ex6(bc=21)
+    Verified: ex1=33, ex2=23, ex3=33, ex4=30, ex5=33, ex6=21, ex7=47, ex8-10=37.
     """
     n_seq = params['n_seq_loops']
-    if n_seq == 0:
-        return None
 
-    sa_dims       = params.get('sa_dims', {})
-    c_global_var  = params.get('c_global_var')    # 'sarows_0' or 'sarows_1'
+    sa_dims        = params.get('sa_dims', {})
+    c_global_var   = params.get('c_global_var')    # 'sarows_0' or 'sarows_1'
     sarows0_in_col = params.get('sarows0_in_col', False)
-    N_W           = params['N_W']
+    N_W            = params['N_W']
+    N_out          = params['N_out']
 
     C_dim = sa_dims.get('C', 1)
     Q_dim = sa_dims.get('Q', 1)
@@ -143,7 +146,7 @@ def compute_body_const(params: dict) -> int | None:
 
     # in_row_base distinct values per bank-0:
     #   n_seq>=2: c_blk = c_seq (outer seq var, fixed per r-loop body) → 1
-    #   n_seq==1: c_blk = sarows_1>>1 → ceil(C_dim/2) distinct values
+    #   n_seq<=1: c_blk = sarows_1>>1 → ceil(C_dim/2) distinct values
     in_row_base = 1 if n_seq >= 2 else bank0_count
 
     # in_col distinct values: Q_dim + (S_dim-1) if sarows_0 in in_col, else Q_dim
@@ -152,9 +155,12 @@ def compute_body_const(params: dict) -> int | None:
     input_bank0 = in_row_base * in_col_distinct
 
     reads_bottleneck = max(weight_bank0, input_bank0)
-    overhead = 9 + 4 * max(0, n_seq - 1) + 2 * (weight_bank0 == input_bank0)
+    tie = int(weight_bank0 == input_bank0)
 
-    return reads_bottleneck + overhead
+    if n_seq == 0:
+        return reads_bottleneck + N_out + 4 + 2 * tie
+    else:
+        return reads_bottleneck + 9 + 4 * max(0, n_seq - 1) + 2 * tie
 
 
 # =============================================================================
@@ -210,8 +216,8 @@ def predict(params: dict, N_mul: int, calib: dict) -> dict:
     """
     Predict total cycles using the fitted 5-parameter formula.
 
-    calib must contain: alpha_acc, alpha_body_fixed, alpha_post, alpha_ex4,
-                        alpha_func, body_const.
+    calib must contain: alpha_acc, alpha_body_fixed, alpha_post, alpha_ex4, alpha_func.
+    body_const is always derived analytically from params via compute_body_const().
     """
     alpha_acc   = calib['alpha_acc']
     alpha_bf    = calib['alpha_body_fixed']
@@ -219,15 +225,7 @@ def predict(params: dict, N_mul: int, calib: dict) -> dict:
     alpha_ex4   = calib['alpha_ex4']
     alpha_func  = calib['alpha_func']
 
-    body_const = calib.get('body_const')       # exact value from prior Bambu run
-    if body_const is None:
-        body_const = compute_body_const(params) # analytical derivation
-    if body_const is None:
-        raise ValueError(
-            "body_const unavailable: n_seq_loops=0 kernels require an entry in "
-            "bambu_calibration.json experiments.<ex_key>.body_const "
-            "(= r_loop_body_states at saturation minus 7, from one Bambu run)."
-        )
+    body_const = compute_body_const(params)
 
     n_outer = params['n_outer']
     n_inner = params['n_inner']
@@ -283,12 +281,10 @@ def load_calib(calib_path: Path, ex_key: str | None = None) -> dict:
         'alpha_post':       plat.get('alpha_post',       1.004),
         'alpha_ex4':        plat.get('alpha_ex4',        -302.3),
         'alpha_func':       plat.get('alpha_func',        361.0),
-        'body_const':       None,
         'measured_cycles':  {},
     }
     if ex_key and ex_key in raw.get('experiments', {}):
         ex = raw['experiments'][ex_key]
-        calib['body_const'] = ex.get('body_const')
         calib['measured_cycles'] = {
             int(k): v for k, v in ex.get('measured_cycles', {}).items()
         }
@@ -340,11 +336,7 @@ def main() -> None:
     calib  = load_calib(calib_path, ex_key)
     params = parse_sa_c(c_path.read_text())
 
-    # Resolve body_const: calib (exact) → analytical → error
-    body_const_calib = calib.get('body_const')
     body_const_analytical = compute_body_const(params)
-    body_const_used = body_const_calib if body_const_calib is not None else body_const_analytical
-    body_const_src = "calib" if body_const_calib is not None else "analytical"
 
     print(f"\nFile  : {c_path.name}  [{ex_key or 'unknown'}]")
     print(f"Params: N_PE={params['N_PE']}, N_W={params['N_W']}, "
@@ -353,7 +345,7 @@ def main() -> None:
           f"n_seq={params['n_seq_loops']}")
     print(f"Calib : α_acc={calib['alpha_acc']:.4f}, α_bf={calib['alpha_body_fixed']:.4f}, "
           f"α_post={calib['alpha_post']:.4f}, α_func={calib['alpha_func']:.1f}, "
-          f"body_const={body_const_used} [{body_const_src}]")
+          f"body_const={body_const_analytical} [analytical]")
 
     if args.sweep or not args.N_mul:
         N_PE   = params['N_PE']

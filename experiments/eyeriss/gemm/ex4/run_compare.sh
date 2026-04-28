@@ -7,7 +7,7 @@ TB="testbench_common.c"
 
 BAMBU_OUT_ROOT="Bambu_outputs"
 
-# Optional first argument: N_MUL overrides -C=__float_mul=N
+# Optional first argument: N_MUL overrides -C=__float_mule8m23b_127nih=N
 N_MUL_DEFAULT=""
 N_MUL="${1:-$N_MUL_DEFAULT}"
 
@@ -35,7 +35,7 @@ run_bambu () {
 
   local float_mul_flag=""
   if [[ -n "$N_MUL" ]]; then
-    float_mul_flag="-C=__float_mul=$N_MUL"
+    float_mul_flag="-C=__float_mule8m23b_127nih=$N_MUL"
   fi
 
   rm -rf "${outdir}"

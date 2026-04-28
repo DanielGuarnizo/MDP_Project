@@ -179,12 +179,18 @@ static void golden_reference(DTYPE *in_full, DTYPE *w_full, DTYPE *out_golden) {
 }}
 
 static int compare(DTYPE *out, DTYPE *gold, size_t so) {{
-    const float eps = 1e-3f;
+    /* Relative+absolute tolerance: handles both tiny outputs and large-sum outputs.
+       1e-3 absolute prevents false positives near zero; 1e-3 relative catches
+       floating-point accumulation differences on large convolutions (C*R*S up to ~25k).
+       Real bugs (wrong loop structure) produce diffs 100-1000x larger than tolerance. */
+    const float eps_abs = 1e-3f;
+    const float eps_rel = 1e-3f;
     int errs = 0;
     for (size_t i = 0; i < so; ++i) {{
         float diff = fabs(out[i]-gold[i]);
-        if (diff > eps) {{
-            printf("ERROR at index %zu: HLS=%.6f Gold=%.6f diff=%.6f\\n", i, out[i], gold[i], diff);
+        float tol  = eps_abs + eps_rel * fabs(gold[i]);
+        if (diff > tol) {{
+            printf("ERROR at index %zu: HLS=%.6f Gold=%.6f diff=%.6f tol=%.6f\\n", i, out[i], gold[i], diff, tol);
             if (++errs > 20) return errs;
         }}
     }}

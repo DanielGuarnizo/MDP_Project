@@ -30,7 +30,7 @@
 
 void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dram_w_b1, DTYPE *dram_out_b0, DTYPE *dram_out_b1, DTYPE *dram_out_b2, DTYPE *dram_out_b3, DTYPE *dram_out_b4, DTYPE *dram_out_b5, DTYPE *dram_out_b6, DTYPE *dram_out_b7, DTYPE *dram_out_b8, DTYPE *dram_out_b9, DTYPE *dram_out_b10, DTYPE *dram_out_b11, DTYPE *dram_out_b12, DTYPE *dram_out_b13, DTYPE *dram_out_b14, DTYPE *dram_out_b15)
 {
-    // SA (weight-preload) Eyeriss CONV -- loop structure mirrors FF mapping hierarchy
+    // SA (weight-preload) Eyeriss CONV — loop structure mirrors FF mapping hierarchy
     const int M=4, P=4, Q=4, C=4, R=1, S=1;
     const int H=4, W=4;
     const int Ptiles=4, Qtiles=1;
@@ -43,9 +43,9 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
     // 64 PE accumulators: acc[4][2][4][2]
     DTYPE acc[4][2][4][2];
 
-    // GlobalBuffer → P:4
+    // GlobalBuffer_0 = P:4
     #pragma GCC nounroll
-    for (int p_gb = 0; p_gb < 4; ++p_gb) {
+    for (int gb_0 = 0; gb_0 < 4; ++gb_0) {
       // Zero 64 PE accumulators (nounroll — non-spatial init)
       #pragma GCC nounroll
       for (int sarows_0 = 0; sarows_0 < 4; ++sarows_0) {
@@ -96,7 +96,7 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
               int c_bank = c_global & 1;
               int c_blk  = c_global >> 1;
               int in_c_base = c_blk * (H * W);
-              int in_row_base = in_c_base + (p_gb + r) * W;
+              int in_row_base = in_c_base + (gb_0 + r) * W;
               int in_col = q_base + sacols_0 + 0;
               DTYPE wv = w_tile[sarows_0][sarows_1][sacols_1];
               DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]
@@ -148,7 +148,7 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
           for (int sacols_1 = 0; sacols_1 < 2; ++sacols_1) {
             int out_bank = sarows_1*8 + sacols_0*2 + sacols_1;
             int cm = 0;
-            int cp = p_gb;
+            int cp = gb_0;
             int cq = 0;
             int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;
             DTYPE v = reduced[sarows_1][sacols_0][sacols_1];
@@ -174,5 +174,5 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
           }
         }
       }
-    }  // outer
+    }  // outer_out
 }

@@ -1,0 +1,122 @@
+-------- architecture --------
+Architecture: eyeriss-conv
+-------- computation  --------
+Computation: {M: 8, P: 8, Q: 8, C: 4, R: 3, S: 3}
+Coupling: dims: MPQCRS, in_coupling: [C][P+R][Q+S], w_coupling: [M][C][R][S], out_coupling: [M][P][Q]
+Bias present: False
+------------------------------
+----- running FactorFlow -----
+------------------------------
+
+Threads: 8
+INFO: forcefully updating setting ITERATE_AMOUNTS to True
+INFO: forcefully updating setting STEPS_TO_EXPLORE to 4
+INFO: forcefully updating setting CO_OPT_STEPS_TO_EXPLORE to 4
+INFO: forcefully updating setting INITIAL_STEPS_TO_EXPLORE to 2
+INFO: forcefully updating setting LOCAL_SEARCH_SPATIAL_LEVELS to True
+INFO: forcefully updating setting CO_OPT_LIMIT_NEXT_STEP_DST_TO_CURRENT_SRC to True
+INFO: forcefully updating setting NO_CONSTRAINTS_CHECK_DURING_MULTISTEP to True
+INFO: --> the cause of this is the presence of Fanout levels (SACols, SARows) with multiple mapped dimensions (['Q', 'M'], ['S', 'C', 'M']). Runtime might increase slightly...
+INFO: forcefully updating setting SPATIAL_STEPS_TO_EXPLORE to 4
+INFO: forcefully updating setting SPATIAL_ITERATE_AMOUNTS to True
+WARNING: running on a Python version without free-threading (GIL enabled), this program relies heavily on true multithreading, thus expect a severe performance hit with your current setup. Consider updating to Python 3.13t or newer.
+INFO: running multithreaded with THREADS_COUNT = 8
+
+-------- factorFlow --------
+Initial condition (Wart: 4.344e-09):
+DRAM ----------> M: 8, P: 8, Q: 8, C: 4, R: 3, S: 3
+GlobalBuffer --
+SACols --------
+SARows --------
+InRegister ----
+WRegister -----
+OutRegister ---
+Compute -------
+
+Starting FactorFlow tiling optimization:
+
+-- local search of spatial levels --
+┌ Moving DRAM --M:8--> SACols
+│ Moving DRAM --S:3--> SARows
+│ Moving DRAM --C:2--> SARows
+└ Moving DRAM --C:2--> SARows
+No valid follow-up configuration, stopping, current Wart: 5.660e-07
+-- local search of memory levels --
+┌ Moving DRAM --R:3--> WRegister
+└ Moving DRAM --P:8--> GlobalBuffer
+┌ Moving DRAM --Q:2--> GlobalBuffer
+└ Moving DRAM --Q:2--> GlobalBuffer
+No valid follow-up configuration, stopping, current Wart: 5.781e-04
+-- spatial-memory levels co-optimization --
+┌ Moving SACols --M:4--> OutRegister
+└ Moving GlobalBuffer --Q:4--> SACols
+Stopping with current Wart: 5.851e-04, while best choice is: 5.761e-04
+
+Final condition:
+Wart: 5.851e-04
+EDP: 3.600e-05 (J*cycle)
+DRAM ----------> Q: 2
+GlobalBuffer --> P: 8
+SACols --------> Q: 4, M: 2
+SARows --------> S: 3, C: 4
+InRegister ----
+WRegister -----> R: 3
+OutRegister ---> M: 4
+Compute -------
+
+Visited mappings: 843
+
+Performed moves: 10
+
+Finished in: 0.638s
+
+Best mapping found with:
+	Wart: 5.851e-04
+	EDP: 3.600e-05 (J*cycle)
+	Energy: 1.875e-01 (uJ)
+	Latency: 1.920e+02 (cc)
+
+Mapping:
+DRAM ----------> Q: 2
+GlobalBuffer --> P: 8
+SACols --------> Q: 4, M: 2
+SARows --------> S: 3, C: 4
+InRegister ----
+WRegister -----> R: 3
+OutRegister ---> M: 4
+Compute -------
+
+Final MOPs per memory level:
+DRAM:		Out_R = 0 (reads) + 0 (drains), Out_W = 512 (updates) + 0 (fills)
+DRAM:		400 In_R, 288 W_R, 0 Our_R, 688 Tot_R,
+		0 In_W, 0 W_W, 512 Out_W, 512 Tot_W
+GlobalBuffer:	Out_R = 0 (reads) + 512 (drains), Out_W = 512 (updates) + 0 (fills)
+GlobalBuffer:	960 In_R, 0 W_R, 512 Our_R, 1472 Tot_R,
+		400 In_W, 0 W_W, 512 Out_W, 912 Tot_W
+InRegister:	18432 In_R, 0 W_R, 0 Our_R, 18432 Tot_R,
+		1920 In_W, 0 W_W, 0 Out_W, 1920 Tot_W
+WRegister:	0 In_R, 18432 W_R, 0 Our_R, 18432 Tot_R,
+		0 In_W, 1152 W_W, 0 Out_W, 1152 Tot_W
+OutRegister:	Out_R = 12288 (reads) + 6144 (drains), Out_W = 18432 (updates) + 0 (fills)
+OutRegister:	0 In_R, 0 W_R, 18432 Our_R, 18432 Tot_R,
+		0 In_W, 0 W_W, 18432 Out_W, 18432 Tot_W
+Totals:		57456 R, 22928 W, 80384 Tot
+Energy:		0.188 uJ
+
+Final Latency per level:
+DRAM:		192cc RD and 192cc FU Latency, 4.0 R and 4.0 W Bandwidth,
+		3.583 R and 2.667 U and 0.000 F and 0.000 D Ideal Bandwidth,
+		96cc per Tile, 0 Stall Cycles
+GlobalBuffer:	192cc RD and 192cc FU Latency, 16.0 R and 16.0 W Bandwidth,
+		5.000 R and 2.667 U and 2.083 F and 2.667 D Ideal Bandwidth,
+		12cc per Tile, 0 Stall Cycles
+InRegister:	192cc RD and 192cc FU Latency, 2.0 R and 2.0 W Bandwidth,
+		1.000 R and 0.000 U and 0.104 F and 0.000 D Ideal Bandwidth,
+		12cc per Tile, 0 Stall Cycles
+WRegister:	192cc RD and 192cc FU Latency, 2.0 R and 2.0 W Bandwidth,
+		1.000 R and 0.000 U and 0.062 F and 0.000 D Ideal Bandwidth,
+		4cc per Tile, 0 Stall Cycles
+OutRegister:	192cc RD and 192cc FU Latency, 2.0 R and 2.0 W Bandwidth,
+		0.667 R and 1.000 U and 0.000 F and 0.333 D Ideal Bandwidth,
+		1cc per Tile, 0 Stall Cycles
+Max Latency:	192cc of level OutRegister

@@ -35,12 +35,12 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
     // 72 PE accumulators: acc[3][3][2][4]
     DTYPE acc[3][3][2][4];
 
-    // DRAM → Q:2
+    // DRAM_0 = Q:2
     #pragma GCC nounroll
-    for (int q_dram = 0; q_dram < 2; ++q_dram) {
-      // GlobalBuffer → P:4
+    for (int dram_0 = 0; dram_0 < 2; ++dram_0) {
+      // GlobalBuffer_0 = P:4
       #pragma GCC nounroll
-      for (int p_gb = 0; p_gb < 4; ++p_gb) {
+      for (int gb_0 = 0; gb_0 < 4; ++gb_0) {
         // Zero 72 PE accumulators (nounroll — non-spatial init)
         #pragma GCC nounroll
         for (int sarows_0 = 0; sarows_0 < 3; ++sarows_0) {
@@ -80,7 +80,7 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
           // ---- Phase 2a: multiply — 72 independent products ----
           // p[3][3][2][4]: GCC SROA → 72 scalar float regs
           DTYPE p[3][3][2][4];
-          int q_base = q_dram * 2;
+          int q_base = dram_0 * 2;
           #pragma GCC unroll 3
           for (int sarows_0 = 0; sarows_0 < 3; ++sarows_0) {  // S:3
             #pragma GCC unroll 3
@@ -93,7 +93,7 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
                   int c_bank = c_global & 1;
                   int c_blk  = c_global >> 1;
                   int in_c_base = c_blk * (H * W);
-                  int in_row_base = in_c_base + (p_gb + r) * W;
+                  int in_row_base = in_c_base + (gb_0 + r) * W;
                   int in_col = q_base + sacols_0 + sarows_0;
                   DTYPE wv = w_tile[sarows_0][sarows_1][sacols_1];
                   DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]
@@ -146,8 +146,8 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
           for (int sacols_1 = 0; sacols_1 < 4; ++sacols_1) {
             int out_bank = sacols_0*4 + sacols_1;
             int cm = 0;
-            int cp = p_gb;
-            int cq = q_dram;
+            int cp = gb_0;
+            int cq = dram_0;
             int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;
             DTYPE v = reduced[sacols_0][sacols_1];
             switch(out_bank) {
@@ -163,6 +163,6 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
             }
           }
         }
-      }  // outer
-    }  // outer
+      }  // outer_out
+    }  // outer_out
 }

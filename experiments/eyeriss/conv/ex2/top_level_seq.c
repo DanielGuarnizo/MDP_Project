@@ -31,15 +31,15 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
     // Accumulator: flat 1D at function scope → GCC SROA → 8 scalar regs
     DTYPE acc[8];
 
-    // M tile (synthetic outer loop)
+    // DRAM_0 = Q:2
     #pragma GCC nounroll
-    for (int m_tile = 0; m_tile < 4; ++m_tile) {
-      // DRAM → Q:2
+    for (int dram_0 = 0; dram_0 < 2; ++dram_0) {
+      // GlobalBuffer_0 = P:8
       #pragma GCC nounroll
-      for (int q_dram = 0; q_dram < 2; ++q_dram) {
-        // GlobalBuffer → P:8
+      for (int gb_0 = 0; gb_0 < 8; ++gb_0) {
+        // OutRegister_0 = M:4
         #pragma GCC nounroll
-        for (int p_gb = 0; p_gb < 8; ++p_gb) {
+        for (int or_0 = 0; or_0 < 4; ++or_0) {
           // Zero accumulator (nounroll — non-spatial init)
           #pragma GCC nounroll
           for (int _i = 0; _i < 8; ++_i) acc[_i] = 0.0f;
@@ -53,7 +53,7 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
               int c_bank = c & 1;
               int c_blk  = c >> 1;
               int in_c_base = c_blk * (H * W);
-              int q_base = q_dram * 4;
+              int q_base = dram_0 * 4;
 
               // SARows S:3
               #pragma GCC nounroll
@@ -62,9 +62,9 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
                 for (int sacols_0 = 0; sacols_0 < 4; ++sacols_0) {  // Q:4
                   #pragma GCC nounroll
                   for (int sacols_1 = 0; sacols_1 < 2; ++sacols_1) {  // M:2
-                    int w_idx = (((m_tile * 2 + (sacols_1))) * ((C + in_banks - 1) / in_banks) + c_blk) * (R * S) + r * S + s;
+                    int w_idx = (((or_0 * 2 + (sacols_1))) * ((C + in_banks - 1) / in_banks) + c_blk) * (R * S) + r * S + s;
                     DTYPE wv = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];
-                    int in_row_base = in_c_base + (p_gb + r) * W;
+                    int in_row_base = in_c_base + (gb_0 + r) * W;
                     int in_col = q_base + sacols_0 + s;
                     DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]
                                             : dram_in_b1[in_row_base + in_col];
@@ -82,9 +82,9 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
             #pragma GCC nounroll
             for (int sacols_1 = 0; sacols_1 < 2; ++sacols_1) {
               int out_bank = sacols_0*2 + sacols_1;
-              int cm = m_tile;
-              int cp = p_gb;
-              int cq = q_dram;
+              int cm = or_0;
+              int cp = gb_0;
+              int cq = dram_0;
               int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;
               DTYPE v = acc[sacols_0*2 + sacols_1];
               switch(out_bank) {
@@ -100,7 +100,7 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
               }
             }
           }
-        }  // outer
-      }  // outer
-    }  // outer
+        }  // outer_out
+      }  // outer_out
+    }  // outer_out
 }

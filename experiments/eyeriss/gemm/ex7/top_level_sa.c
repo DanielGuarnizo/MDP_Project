@@ -15,32 +15,53 @@
 
 void top_level(DTYPE *dram_w_b0, DTYPE *dram_w_b1, DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_out_b0, DTYPE *dram_out_b1, DTYPE *dram_out_b2, DTYPE *dram_out_b3)
 {
-    // SA-shaped Eyeriss GEMM -- loop structure mirrors FF mapping hierarchy
+    // SA (weight-preload) Eyeriss GEMM -- loop structure mirrors FF mapping hierarchy
     const int M=4, K=4, N=1;
     const int m_sf=4, m_sacols=2, m_sarows=2;
     const int k_sa=2, k_blks=2, M_tiles=1;
 
+    // Accumulator: flat 1D at function scope → GCC SROA → 4 scalar regs
+    DTYPE acc[4];
+
     // GlobalBuffer → K:2
+    #pragma GCC nounroll
     for (int k_gb = 0; k_gb < 2; ++k_gb) {
-      // Accumulator: one element per M lane (N handled by outer loop)
-      DTYPE acc[4];
-      #pragma GCC unroll 4
+      // Zero accumulator (nounroll — non-spatial init)
+      #pragma GCC nounroll
       for (int mi = 0; mi < 4; ++mi) acc[mi] = 0.0f;
 
-      // SARows M:2 × SACols M:2 × SACols K:2 — unrolled
+      // ---- Phase 1: preload A weights for this k-tile ----
+      // w_tile[2][2][2] → GCC SROA → 8 scalar regs
+      DTYPE w_tile[2][2][2];
       #pragma GCC unroll 2
       for (int mri = 0; mri < 2; ++mri) {
         #pragma GCC unroll 2
         for (int mci = 0; mci < 2; ++mci) {
-          int acc_m = mri * 2 + mci;
-          int m_global = acc_m;
+          int m_global = 0 * 4 + mri * 2 + mci;
           #pragma GCC unroll 2
           for (int kci = 0; kci < 2; ++kci) {
             int k_global = k_gb * 2 + kci;
             int k_bank = k_global & 1;
             int k_blk  = k_global >> 1;
-            DTYPE wv = (k_bank==0) ? dram_w_b0[m_global * k_blks + k_blk]
-                                   : dram_w_b1[m_global * k_blks + k_blk];
+            w_tile[mri][mci][kci] = (k_bank==0) ? dram_w_b0[m_global * k_blks + k_blk]
+                                                 : dram_w_b1[m_global * k_blks + k_blk];
+          }
+        }
+      }
+
+      // ---- Phase 2: compute using local w_tile + AXI B reads only ----
+      // SARows M:2 × SACols M:2 × SACols K:2
+      #pragma GCC unroll 2
+      for (int mri = 0; mri < 2; ++mri) {
+        #pragma GCC unroll 2
+        for (int mci = 0; mci < 2; ++mci) {
+          int acc_m = mri * 2 + mci;
+          #pragma GCC unroll 2
+          for (int kci = 0; kci < 2; ++kci) {
+            int k_global = k_gb * 2 + kci;
+            int k_bank = k_global & 1;
+            int k_blk  = k_global >> 1;
+            DTYPE wv = w_tile[mri][mci][kci];  // local reg — off AXI path
             DTYPE iv = (k_bank==0) ? dram_in_b0[k_blk * N + 0]
                                    : dram_in_b1[k_blk * N + 0];
             acc[acc_m] += wv * iv;

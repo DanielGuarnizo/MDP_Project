@@ -1,0 +1,23 @@
+{
+  "factorflow": {
+    "main_cli": "./FactorFlow/main_cli.py",
+    "architecture": "eyeriss-conv",
+    "args": [
+      4,
+      4,
+      4,
+      4,
+      3,
+      6
+    ],
+    "force": false
+  },
+  "bambu": {
+    "clock_period": 5,
+    "compiler": "I386_GCC8",
+    "opt_level": 3
+  },
+  "layout": {
+    "ff_output_dir": "FF_output"
+  }
+}

@@ -47,12 +47,12 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
     // Accumulator: flat 1D at function scope → GCC SROA → 24 scalar regs
     DTYPE acc[24];
 
-    // DRAM → P:2
+    // DRAM_0 = P:2
     #pragma GCC nounroll
-    for (int p_dram = 0; p_dram < 2; ++p_dram) {
-      // GlobalBuffer → P:3
+    for (int dram_0 = 0; dram_0 < 2; ++dram_0) {
+      // GlobalBuffer_0 = P:3
       #pragma GCC nounroll
-      for (int p_gb = 0; p_gb < 3; ++p_gb) {
+      for (int gb_0 = 0; gb_0 < 3; ++gb_0) {
         // Zero accumulator (nounroll — non-spatial init)
         #pragma GCC nounroll
         for (int _i = 0; _i < 24; ++_i) acc[_i] = 0.0f;
@@ -79,7 +79,7 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
                   for (int sacols_1 = 0; sacols_1 < 2; ++sacols_1) {  // M:2
                     int w_idx = ((sarows_1*2 + sacols_1) * ((C + in_banks - 1) / in_banks) + c_blk) * (R * S) + r * S + s;
                     DTYPE wv = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];
-                    int in_row_base = in_c_base + ((p_dram * 3 + p_gb) + r) * W;
+                    int in_row_base = in_c_base + ((dram_0 * 3 + gb_0) + r) * W;
                     int in_col = q_base + sacols_0 + s;
                     DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]
                                             : dram_in_b1[in_row_base + in_col];
@@ -101,7 +101,7 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
             for (int sacols_1 = 0; sacols_1 < 2; ++sacols_1) {
               int out_bank = sarows_1*12 + sacols_0*2 + sacols_1;
               int cm = 0;
-              int cp = (p_dram * 3 + p_gb);
+              int cp = (dram_0 * 3 + gb_0);
               int cq = 0;
               int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;
               DTYPE v = acc[sarows_1*12 + sacols_0*2 + sacols_1];
@@ -135,6 +135,6 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
             }
           }
         }
-      }  // outer
-    }  // outer
+      }  // outer_out
+    }  // outer_out
 }
