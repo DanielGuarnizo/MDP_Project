@@ -106,7 +106,7 @@ def make_conv_testbench(mapping: MappingInfo, bank: ConvBankSpec,
     # output gather switch
     gather_switch = ""
     for i in range(out_banks):
-        gather_switch += f"            case {i}: out_full[out_idx] = dram_out_b{i}[idx_b]; break;\n"
+        gather_switch += f"            case {i}: out_full[out_idx] = dram_out_b{i}[output_dram_offset]; break;\n"
     if not gather_switch:
         gather_switch = "            default: out_full[out_idx] = 0.0f; break;\n"
 
@@ -139,11 +139,11 @@ def make_conv_testbench(mapping: MappingInfo, bank: ConvBankSpec,
             f"int lane_m = ({m_sf}==1)?0:(m % {m_sf});\n"
             f"          int lane_p = ({p_sf}==1)?0:(p % {p_sf});\n"
             f"          int lane_q = ({q_sf}==1)?0:(q % {q_sf});\n"
-            f"          int bank = (lane_m*{p_sf} + lane_p)*{q_sf} + lane_q;\n"
-            f"          int cm = ({m_sf}==1)?m:(m / {m_sf});\n"
-            f"          int cp = ({p_sf}==1)?p:(p / {p_sf});\n"
-            f"          int cq = ({q_sf}==1)?q:(q / {q_sf});\n"
-            f"          int idx_b = (cm*{Ptiles} + cp)*{Qtiles} + cq;"
+            f"          int output_bank_index = (lane_m*{p_sf} + lane_p)*{q_sf} + lane_q;\n"
+            f"          int output_filter_tile = ({m_sf}==1)?m:(m / {m_sf});\n"
+            f"          int output_row_tile = ({p_sf}==1)?p:(p / {p_sf});\n"
+            f"          int output_col_tile = ({q_sf}==1)?q:(q / {q_sf});\n"
+            f"          int output_dram_offset = (output_filter_tile*{Ptiles} + output_row_tile)*{Qtiles} + output_col_tile;"
         )
 
     code += f"""
@@ -280,7 +280,7 @@ int main() {{
           {gather_block}
 
           int out_idx = m*{P}*{Q} + p*{Q} + q;
-          switch(bank) {{
+          switch(output_bank_index) {{
 {gather_switch}            default: out_full[out_idx] = 0.0f; break;
           }}
         }}

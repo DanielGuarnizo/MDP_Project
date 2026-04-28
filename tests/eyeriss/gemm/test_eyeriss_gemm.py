@@ -18,14 +18,16 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT       = Path(__file__).parents[3]      # tests/eyeriss/gemm/ → repo root
-EXPERIMENTS_DIR = REPO_ROOT / "experiments" / "eyeriss" / "gemm"
+REPO_ROOT = Path(__file__).parents[3]      # tests/eyeriss/gemm/ → repo root
+GENERATED = Path(__file__).parent / "generated"
 
 
 def _experiments():
+    if not GENERATED.exists():
+        return []
     return [
         pytest.param(d, id=d.name)
-        for d in sorted(EXPERIMENTS_DIR.glob("ex*"))
+        for d in sorted(GENERATED.glob("ex*"))
         if (d / "config.json").exists()
     ]
 

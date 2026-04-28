@@ -29,32 +29,32 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
     const int in_banks=2;
 
     // Accumulator: flat 1D at function scope → GCC SROA → 8 scalar regs
-    DTYPE acc[8];
+    DTYPE accumulator[8];
 
     // GlobalBuffer_0 = Q:2
     #pragma GCC nounroll
-    for (int gb_0 = 0; gb_0 < 2; ++gb_0) {
+    for (int globalbuffer_0 = 0; globalbuffer_0 < 2; ++globalbuffer_0) {
       // GlobalBuffer_1 = P:4
       #pragma GCC nounroll
-      for (int gb_1 = 0; gb_1 < 4; ++gb_1) {
+      for (int globalbuffer_1 = 0; globalbuffer_1 < 4; ++globalbuffer_1) {
         // Zero accumulator (nounroll — non-spatial init)
         #pragma GCC nounroll
-        for (int _i = 0; _i < 8; ++_i) acc[_i] = 0.0f;
+        for (int accumulator_dim_index = 0; accumulator_dim_index < 8; ++accumulator_dim_index) accumulator[accumulator_dim_index] = 0.0f;
 
         // WRegister → C:2 (sequential)
         #pragma GCC nounroll
-        for (int c_seq = 0; c_seq < 2; ++c_seq) {
+        for (int wregister_0 = 0; wregister_0 < 2; ++wregister_0) {
           // WRegister → R:3 (sequential)
           #pragma GCC nounroll
-          for (int r = 0; r < 3; ++r) {
+          for (int wregister_1 = 0; wregister_1 < 3; ++wregister_1) {
             // SARows C:2 -- sequential (reduction)
             #pragma GCC nounroll
             for (int c = 0; c < 2; ++c) {
-              int c_global = c_seq * 2 + c;
-              int c_bank = c_global & 1;
-              int c_blk  = c_global >> 1;
-              int in_c_base = c_blk * (H * W);
-              int q_base = gb_0 * 2;
+              int global_channel_index = wregister_0 * 2 + c;
+              int channel_bank = global_channel_index & 1;
+              int channel_block_index = global_channel_index >> 1;
+              int input_channel_base_address = channel_block_index * (H * W);
+              int output_col_base = globalbuffer_0 * 2;
 
               // SARows S:6
               #pragma GCC nounroll
@@ -63,45 +63,45 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
                 for (int sacols_0 = 0; sacols_0 < 2; ++sacols_0) {  // Q:2
                   #pragma GCC nounroll
                   for (int sacols_1 = 0; sacols_1 < 4; ++sacols_1) {  // M:4
-                    int w_idx = ((sacols_1) * ((C + in_banks - 1) / in_banks) + c_blk) * (R * S) + r * S + s;
-                    DTYPE wv = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];
-                    int in_row_base = in_c_base + (gb_1 + r) * W;
-                    int in_col = q_base + sacols_0 + s;
-                    DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]
-                                            : dram_in_b1[in_row_base + in_col];
-                    acc[sacols_0*4 + sacols_1] += wv * inv;
+                    int weight_dram_index = ((sacols_1) * ((C + in_banks - 1) / in_banks) + channel_block_index) * (R * S) + wregister_1 * S + s;
+                    DTYPE weight_value = (channel_bank==0) ? dram_w_b0[weight_dram_index] : dram_w_b1[weight_dram_index];
+                    int input_row_base_address = input_channel_base_address + (globalbuffer_1 + wregister_1) * W;
+                    int input_column_offset = output_col_base + sacols_0 + s;
+                    DTYPE input_value = (channel_bank==0) ? dram_in_b0[input_row_base_address + input_column_offset]
+                                                          : dram_in_b1[input_row_base_address + input_column_offset];
+                    accumulator[sacols_0*4 + sacols_1] += weight_value * input_value;
                   }  // sacols_1 (M:4)
                 }  // sacols_0 (Q:2)
               }  // s
             }  // c
 
-          }  // inner seq
-        }  // inner seq
+          }  // wregister_1
+        }  // wregister_0
 
-        // OutRegister: write acc to banked output ports
+        // OutRegister: write accumulator to banked output ports
         #pragma GCC nounroll 2
         for (int sacols_0 = 0; sacols_0 < 2; ++sacols_0) {
           #pragma GCC nounroll 4
           for (int sacols_1 = 0; sacols_1 < 4; ++sacols_1) {
-            int out_bank = sacols_0*4 + sacols_1;
-            int cm = 0;
-            int cp = gb_1;
-            int cq = gb_0;
-            int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;
-            DTYPE v = acc[sacols_0*4 + sacols_1];
-            switch(out_bank) {
-              case 0: dram_out_b0[out_idx_b] = v; break;
-              case 1: dram_out_b1[out_idx_b] = v; break;
-              case 2: dram_out_b2[out_idx_b] = v; break;
-              case 3: dram_out_b3[out_idx_b] = v; break;
-              case 4: dram_out_b4[out_idx_b] = v; break;
-              case 5: dram_out_b5[out_idx_b] = v; break;
-              case 6: dram_out_b6[out_idx_b] = v; break;
-              case 7: dram_out_b7[out_idx_b] = v; break;
+            int output_bank = sacols_0*4 + sacols_1;
+            int output_filter_tile = 0;
+            int output_row_tile = globalbuffer_1;
+            int output_col_tile = globalbuffer_0;
+            int output_dram_offset = (output_filter_tile * Ptiles + output_row_tile) * Qtiles + output_col_tile;
+            DTYPE output_value = accumulator[sacols_0*4 + sacols_1];
+            switch(output_bank) {
+              case 0: dram_out_b0[output_dram_offset] = output_value; break;
+              case 1: dram_out_b1[output_dram_offset] = output_value; break;
+              case 2: dram_out_b2[output_dram_offset] = output_value; break;
+              case 3: dram_out_b3[output_dram_offset] = output_value; break;
+              case 4: dram_out_b4[output_dram_offset] = output_value; break;
+              case 5: dram_out_b5[output_dram_offset] = output_value; break;
+              case 6: dram_out_b6[output_dram_offset] = output_value; break;
+              case 7: dram_out_b7[output_dram_offset] = output_value; break;
               default: break;
             }
           }
         }
-      }  // outer_out
-    }  // outer_out
+      }  // globalbuffer_1
+    }  // globalbuffer_0
 }

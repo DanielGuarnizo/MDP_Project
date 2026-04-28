@@ -23,9 +23,9 @@ void top_level(DTYPE *dram_w_b0, DTYPE *dram_w_b1, DTYPE *dram_in_b0, DTYPE *dra
     // M tile (synthetic outer loop)
     #pragma GCC nounroll
     for (int m_tile = 0; m_tile < 3; ++m_tile) {
-      // DRAM → N:7
+      // DRAM_0 = N:7
       #pragma GCC nounroll
-      for (int n_dram = 0; n_dram < 7; ++n_dram) {
+      for (int dram_0 = 0; dram_0 < 7; ++dram_0) {
         // Zero accumulator (nounroll — non-spatial init)
         #pragma GCC nounroll
         for (int mi = 0; mi < 1; ++mi) acc[mi] = 0.0f;
@@ -34,51 +34,51 @@ void top_level(DTYPE *dram_w_b0, DTYPE *dram_w_b1, DTYPE *dram_in_b0, DTYPE *dra
         // w_tile[1][1][5] → GCC SROA → 5 scalar regs
         DTYPE w_tile[1][1][5];
         #pragma GCC unroll 1
-        for (int mri = 0; mri < 1; ++mri) {
+        for (int sarows_0 = 0; sarows_0 < 1; ++sarows_0) {
           #pragma GCC unroll 1
-          for (int mci = 0; mci < 1; ++mci) {
-            int m_global = m_tile * 1 + mri * 1 + mci;
+          for (int sacols_0 = 0; sacols_0 < 1; ++sacols_0) {
+            int m_global = m_tile * 1 + sarows_0 * 1 + sacols_0;
             #pragma GCC unroll 5
-            for (int kci = 0; kci < 5; ++kci) {
-              int k_global = kci;
+            for (int sacols_1 = 0; sacols_1 < 5; ++sacols_1) {
+              int k_global = sacols_1;
               int k_bank = k_global & 1;
               int k_blk  = k_global >> 1;
-              w_tile[mri][mci][kci] = (k_bank==0) ? dram_w_b0[m_global * k_blks + k_blk]
+              w_tile[sarows_0][sacols_0][sacols_1] = (k_bank==0) ? dram_w_b0[m_global * k_blks + k_blk]
                                                    : dram_w_b1[m_global * k_blks + k_blk];
-            }
-          }
-        }
+            }  // sacols_1
+          }  // sacols_0
+        }  // sarows_0
 
         // ---- Phase 2: compute using local w_tile + AXI B reads only ----
         // SARows M:1 × SACols M:1 × SACols K:5
         #pragma GCC unroll 1
-        for (int mri = 0; mri < 1; ++mri) {
+        for (int sarows_0 = 0; sarows_0 < 1; ++sarows_0) {
           #pragma GCC unroll 1
-          for (int mci = 0; mci < 1; ++mci) {
-            int acc_m = mri * 1 + mci;
+          for (int sacols_0 = 0; sacols_0 < 1; ++sacols_0) {
+            int m_lane = sarows_0 * 1 + sacols_0;
             #pragma GCC unroll 5
-            for (int kci = 0; kci < 5; ++kci) {
-              int k_global = kci;
+            for (int sacols_1 = 0; sacols_1 < 5; ++sacols_1) {
+              int k_global = sacols_1;
               int k_bank = k_global & 1;
               int k_blk  = k_global >> 1;
-              DTYPE wv = w_tile[mri][mci][kci];  // local reg — off AXI path
-              DTYPE iv = (k_bank==0) ? dram_in_b0[k_blk * N + n_dram]
-                                     : dram_in_b1[k_blk * N + n_dram];
-              acc[acc_m] += wv * iv;
-            }  // kci
-          }  // mci
-        }  // mri
+              DTYPE wv = w_tile[sarows_0][sacols_0][sacols_1];  // local reg — off AXI path
+              DTYPE iv = (k_bank==0) ? dram_in_b0[k_blk * N + dram_0]
+                                     : dram_in_b1[k_blk * N + dram_0];
+              acc[m_lane] += wv * iv;
+            }  // sacols_1
+          }  // sacols_0
+        }  // sarows_0
 
 
         // Write accumulator to banked output ports
         #pragma GCC unroll 1
-        for (int ml = 0; ml < 1; ++ml) {
-          int out_idx = m_tile * N + n_dram;
-          switch(ml) {
-            case 0: dram_out_b0[out_idx] = acc[ml]; break;
+        for (int m_lane = 0; m_lane < 1; ++m_lane) {
+          int out_offset = m_tile * N + dram_0;
+          switch(m_lane) {
+            case 0: dram_out_b0[out_offset] = acc[m_lane]; break;
             default: break;
           }
-        }  // ml
-      }  // outer
-    }  // outer
+        }  // m_lane
+      }  // dram_0
+    }  // m_tile
 }

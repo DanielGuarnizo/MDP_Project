@@ -118,7 +118,7 @@ def _scalar_tree(values: List[str]) -> Tuple[List[str], str]:
         nxt = []
         for i in range(0, len(values), 2):
             if i + 1 < len(values):
-                v = f"_t{level}_{i//2}"
+                v = f"partial_sum_{level}_{i//2}"
                 stmts.append(f"DTYPE {v} = {values[i]} + {values[i+1]};")
                 nxt.append(v)
             else:
@@ -157,28 +157,28 @@ def _verify_sa_structure(spec: "SADimSpec", sa_text: str, name: str) -> None:
     import re
 
     # Check 1+2: parse acc and p bracket shapes
-    acc_match = re.search(r'DTYPE\s+acc(\[\d+\])+', sa_text)
-    p_match   = re.search(r'DTYPE\s+p(\[\d+\])+',   sa_text)
+    acc_match = re.search(r'DTYPE\s+accumulator(\[\d+\])+', sa_text)
+    p_match   = re.search(r'DTYPE\s+product(\[\d+\])+',   sa_text)
 
     if not acc_match:
-        raise ValueError(f"[verify_sa] {name}: 'DTYPE acc[...]' not found in generated SA code")
+        raise ValueError(f"[verify_sa] {name}: 'DTYPE accumulator[...]' not found in generated SA code")
 
     acc_nums = [int(x) for x in re.findall(r'\[(\d+)\]', acc_match.group(0))]
     code_N_PE = math.prod(acc_nums)
 
     if code_N_PE != spec.N_PE:
         raise ValueError(
-            f"[verify_sa] {name}: acc shape product={code_N_PE} != mapping N_PE={spec.N_PE} "
-            f"(acc brackets: {acc_nums}, spec.all_dims={spec.all_dims})"
+            f"[verify_sa] {name}: accumulator shape product={code_N_PE} != mapping N_PE={spec.N_PE} "
+            f"(accumulator brackets: {acc_nums}, spec.all_dims={spec.all_dims})"
         )
 
     if not p_match:
-        raise ValueError(f"[verify_sa] {name}: 'DTYPE p[...]' not found in generated SA code")
+        raise ValueError(f"[verify_sa] {name}: 'DTYPE product[...]' not found in generated SA code")
 
     p_nums = [int(x) for x in re.findall(r'\[(\d+)\]', p_match.group(0))]
     if p_nums != acc_nums:
         raise ValueError(
-            f"[verify_sa] {name}: p shape {p_nums} != acc shape {acc_nums}"
+            f"[verify_sa] {name}: product shape {p_nums} != accumulator shape {acc_nums}"
         )
 
     # Check 3: reduction block present when N_red > 1
@@ -217,27 +217,27 @@ def _gen_gather_bank_c(spec: "SADimSpec", lvars: List[str],
 
     lines = []
     if N_M_sp > 1:
-        lines.append(f"int m_local = m % {N_M_sp};")
-        lines += decompose(m_ann, N_M_sp, "m_local")
+        lines.append(f"int local_filter_index = m % {N_M_sp};")
+        lines += decompose(m_ann, N_M_sp, "local_filter_index")
     elif m_ann:
         lines.append(f"int {m_ann[0][0]} = 0;")
     if N_Q_sp > 1:
-        lines.append(f"int q_local = q % {N_Q_sp};")
-        lines += decompose(q_ann, N_Q_sp, "q_local")
+        lines.append(f"int local_col_index = q % {N_Q_sp};")
+        lines += decompose(q_ann, N_Q_sp, "local_col_index")
     elif q_ann:
         lines.append(f"int {q_ann[0][0]} = 0;")
     if N_P_sp > 1:
-        lines.append(f"int p_local = p % {N_P_sp};")
-        lines += decompose(p_ann, N_P_sp, "p_local")
+        lines.append(f"int local_row_index = p % {N_P_sp};")
+        lines += decompose(p_ann, N_P_sp, "local_row_index")
     elif p_ann:
         lines.append(f"int {p_ann[0][0]} = 0;")
 
     bank_expr = _mixed_radix(out_loop_vars_f)
-    lines.append(f"int bank = {bank_expr};")
-    lines.append(f"int cm = m / {N_M_sp};")
-    lines.append(f"int cq = q / {N_Q_sp};")
-    lines.append(f"int cp = p;")
-    lines.append(f"int idx_b = (cm * {Ptiles} + cp) * {Qtiles} + cq;")
+    lines.append(f"int output_bank_index = {bank_expr};")
+    lines.append(f"int output_filter_tile = m / {N_M_sp};")
+    lines.append(f"int output_col_tile = q / {N_Q_sp};")
+    lines.append(f"int output_row_tile = p;")
+    lines.append(f"int output_dram_offset = (output_filter_tile * {Ptiles} + output_row_tile) * {Qtiles} + output_col_tile;")
     return "\n          ".join(lines)
 
 
@@ -439,9 +439,7 @@ def _classify_levels(mapping: MappingInfo):
 
 
 def _level_short(lvl: str) -> str:
-    return {"DRAM": "dram", "GlobalBuffer": "gb", "WRegister": "wr", "InRegister": "ir"}.get(
-        lvl, lvl.lower()[:3]
-    )
+    return lvl.lower().replace(" ", "")
 
 
 def _composite_tile_expr(terms: list) -> Tuple:
@@ -525,8 +523,8 @@ def _build_sa_ctx(mapping: MappingInfo, bank: ConvBankSpec) -> _SACtx:
     for dim, fac in (tiling.get("OutRegister", {}) or {}).items():
         fac = int(fac)
         if dim in _OUTPUT_DIMS:
-            k = level_ctr.get("or", 0); level_ctr["or"] = k + 1
-            vname = f"or_{k}"
+            k = level_ctr.get("outregister", 0); level_ctr["outregister"] = k + 1
+            vname = f"outregister_{k}"
             outer_loop_specs.append((vname, fac, f"OutRegister_{k} = {dim}:{fac}", dim))
             if dim == "Q": outer_q_terms.append((vname, fac))
             if dim == "P": outer_p_terms.append((vname, fac))
@@ -548,11 +546,14 @@ def _build_sa_ctx(mapping: MappingInfo, bank: ConvBankSpec) -> _SACtx:
 
     inner_loop_specs: list = []
     inner_r_var = None; inner_c_var = None; inner_c_factor = 1
+    inner_level_ctr: Dict[str, int] = {}
     for lvl in inner_mem:
+        lvl_name = lvl.lower().replace(" ", "")
         for dim, fac in (tiling.get(lvl, {}) or {}).items():
             fac = int(fac)
-            vname = "c_seq" if dim == "C" else dim.lower()
-            if dim == "C": inner_c_var = "c_seq"; inner_c_factor = fac
+            k = inner_level_ctr.get(lvl_name, 0); inner_level_ctr[lvl_name] = k + 1
+            vname = f"{lvl_name}_{k}"
+            if dim == "C": inner_c_var = vname; inner_c_factor = fac
             inner_loop_specs.append((vname, fac, f"{lvl} → {dim}:{fac}"))
             if dim == "R": inner_r_var = vname
 
@@ -584,12 +585,12 @@ def _emit_acc_decl(ctx: _SACtx, unroll: bool) -> List[str]:
     shape_str = "".join(f"[{f}]" for _, f, _ in spec.all_dims)
     if unroll:
         lines = [f"    {c}" for c in spec.loop_var_comments()]
-        lines.append(f"    // {spec.N_PE} PE accumulators: acc{shape_str}")
-        lines.append(f"    DTYPE acc{shape_str};")
+        lines.append(f"    // {spec.N_PE} PE accumulators: accumulator{shape_str}")
+        lines.append(f"    DTYPE accumulator{shape_str};")
     else:
         lines = [
             f"    // Accumulator: flat 1D at function scope → GCC SROA → {spec.N_out} scalar regs",
-            f"    DTYPE acc[{spec.N_out}];",
+            f"    DTYPE accumulator[{spec.N_out}];",
         ]
     return lines
 
@@ -605,14 +606,14 @@ def _emit_acc_init(ctx: _SACtx, unroll: bool, indent: str) -> List[str]:
             lines += [f"{cur}#pragma GCC nounroll",
                       f"{cur}for (int {var} = 0; {var} < {fac}; ++{var}) {{"]
             cur += "  "
-        lines.append(f"{cur}acc{''.join(f'[{v}]' for v in lvars)} = 0.0f;")
+        lines.append(f"{cur}accumulator{''.join(f'[{v}]' for v in lvars)} = 0.0f;")
         for _ in spec.all_dims:
             cur = cur[:-2]; lines.append(f"{cur}}}")
     else:
         lines += [
             f"{indent}// Zero accumulator (nounroll — non-spatial init)",
             f"{indent}#pragma GCC nounroll",
-            f"{indent}for (int _i = 0; _i < {spec.N_out}; ++_i) acc[_i] = 0.0f;",
+            f"{indent}for (int accumulator_dim_index = 0; accumulator_dim_index < {spec.N_out}; ++accumulator_dim_index) accumulator[accumulator_dim_index] = 0.0f;",
         ]
     return lines
 
@@ -657,19 +658,19 @@ def _emit_sa_compute_body(ctx: _SACtx, r_var: str, indent: str) -> List[str]:
     # ---- Phase 1: preload weights (non-Q SA dims only) ----
     lines += [
         f"{indent}// ---- Phase 1: preload weights — {n_w_elems} elems, no Q loop ----",
-        f"{indent}// w_tile{w_shape}: level-indexed, Q absent (weight is Q-independent)",
-        f"{indent}DTYPE w_tile{w_shape};",
+        f"{indent}// weight_tile{w_shape}: level-indexed, Q absent (weight is Q-independent)",
+        f"{indent}DTYPE weight_tile{w_shape};",
     ]
     pre = indent
     for v, f in non_q_pairs:
         lines += [f"{pre}#pragma GCC unroll {f}", f"{pre}for (int {v} = 0; {v} < {f}; ++{v}) {{"]
         pre += "  "
     lines += [
-        f"{pre}int c_global = {c_global_expr};",
-        f"{pre}int c_bank = c_global & 1;",
-        f"{pre}int c_blk  = c_global >> 1;",
-        f"{pre}int w_idx = ({m_total_expr} * ((C + in_banks - 1) / in_banks) + c_blk) * (R * S) + {r_var} * S + {s_total_expr};",
-        f"{pre}w_tile{w_idx_str} = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];",
+        f"{pre}int global_channel_index = {c_global_expr};",
+        f"{pre}int channel_bank = global_channel_index & 1;",
+        f"{pre}int channel_block_index = global_channel_index >> 1;",
+        f"{pre}int weight_dram_index = ({m_total_expr} * ((C + in_banks - 1) / in_banks) + channel_block_index) * (R * S) + {r_var} * S + {s_total_expr};",
+        f"{pre}weight_tile{w_idx_str} = (channel_bank==0) ? dram_w_b0[weight_dram_index] : dram_w_b1[weight_dram_index];",
     ]
     for v, _ in reversed(non_q_pairs):
         pre = pre[:-2]; lines.append(f"{pre}}}  // {v} (preload)")
@@ -678,9 +679,9 @@ def _emit_sa_compute_body(ctx: _SACtx, r_var: str, indent: str) -> List[str]:
     # ---- Phase 2a: multiply — N_PE independent products ----
     lines += [
         f"{indent}// ---- Phase 2a: multiply — {spec.N_PE} independent products ----",
-        f"{indent}// p{p_shape}: GCC SROA → {spec.N_PE} scalar float regs",
-        f"{indent}DTYPE p{p_shape};",
-        f"{indent}int q_base = {ctx.outer_q_var} * {N_Q_sp};" if ctx.outer_q_var else f"{indent}int q_base = 0;",
+        f"{indent}// product{p_shape}: GCC SROA → {spec.N_PE} scalar float regs",
+        f"{indent}DTYPE product{p_shape};",
+        f"{indent}int output_col_base = {ctx.outer_q_var} * {N_Q_sp};" if ctx.outer_q_var else f"{indent}int output_col_base = 0;",
     ]
     p2a = indent
     for v, (dm, f, _) in zip(lvars, spec.all_dims):
@@ -688,16 +689,16 @@ def _emit_sa_compute_body(ctx: _SACtx, r_var: str, indent: str) -> List[str]:
         p2a += "  "
     p_row = f"({ctx.outer_p_var} + {r_var})" if ctx.outer_p_var else r_var
     lines += [
-        f"{p2a}int c_global = {c_global_expr};",
-        f"{p2a}int c_bank = c_global & 1;",
-        f"{p2a}int c_blk  = c_global >> 1;",
-        f"{p2a}int in_c_base = c_blk * (H * W);",
-        f"{p2a}int in_row_base = in_c_base + {p_row} * W;",
-        f"{p2a}int in_col = q_base + {q_flat} + {s_total_expr};",
-        f"{p2a}DTYPE wv = w_tile{w_idx_str};",
-        f"{p2a}DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]",
-        f"{p2a}                        : dram_in_b1[in_row_base + in_col];",
-        f"{p2a}p{p_idx_str} = wv * inv;",
+        f"{p2a}int global_channel_index = {c_global_expr};",
+        f"{p2a}int channel_bank = global_channel_index & 1;",
+        f"{p2a}int channel_block_index = global_channel_index >> 1;",
+        f"{p2a}int input_channel_base_address = channel_block_index * (H * W);",
+        f"{p2a}int input_row_base_address = input_channel_base_address + {p_row} * W;",
+        f"{p2a}int input_column_offset = output_col_base + {q_flat} + {s_total_expr};",
+        f"{p2a}DTYPE weight_value = weight_tile{w_idx_str};",
+        f"{p2a}DTYPE input_value = (channel_bank==0) ? dram_in_b0[input_row_base_address + input_column_offset]",
+        f"{p2a}                                      : dram_in_b1[input_row_base_address + input_column_offset];",
+        f"{p2a}product{p_idx_str} = weight_value * input_value;",
     ]
     for v, (dm, f, _) in reversed(list(zip(lvars, spec.all_dims))):
         p2a = p2a[:-2]; lines.append(f"{p2a}}}  // {v} ({dm}:{f})")
@@ -709,7 +710,7 @@ def _emit_sa_compute_body(ctx: _SACtx, r_var: str, indent: str) -> List[str]:
     for v, (dm, f, _) in zip(lvars, spec.all_dims):
         lines += [f"{p2b}#pragma GCC unroll {f}", f"{p2b}for (int {v} = 0; {v} < {f}; ++{v}) {{"]
         p2b += "  "
-    lines.append(f"{p2b}acc{p_idx_str} += p{p_idx_str};")
+    lines.append(f"{p2b}accumulator{p_idx_str} += product{p_idx_str};")
     for v, (dm, f, _) in reversed(list(zip(lvars, spec.all_dims))):
         p2b = p2b[:-2]; lines.append(f"{p2b}}}  // {v}")
     lines.append("")
@@ -734,20 +735,20 @@ def _emit_seq_compute_body(ctx: _SACtx, r_var: str, indent: str) -> List[str]:
     s_seq_expr = f"({ctx.outer_s_var} * {ctx.S_sa} + s)" if ctx.outer_s_var else "s"
 
     def _c_setup(ind):
-        """Emit c_bank/c_blk/in_c_base/q_base lines inside the c loop."""
+        """Emit channel_bank/channel_block_index/input_channel_base_address/output_col_base lines inside the c loop."""
         if ctx.outer_c_var or ctx.inner_c_var:
             parts = []
             if ctx.outer_c_var: parts.append(f"{ctx.outer_c_var} * {ctx.inner_c_factor * ctx.C_sa}")
             if ctx.inner_c_var: parts.append(f"{ctx.inner_c_var} * {ctx.C_sa}")
             parts.append("c")
-            lines.extend([f"{ind}  int c_global = {' + '.join(parts)};",
-                           f"{ind}  int c_bank = c_global & 1;",
-                           f"{ind}  int c_blk  = c_global >> 1;"])
+            lines.extend([f"{ind}  int global_channel_index = {' + '.join(parts)};",
+                           f"{ind}  int channel_bank = global_channel_index & 1;",
+                           f"{ind}  int channel_block_index = global_channel_index >> 1;"])
         else:
-            lines.extend([f"{ind}  int c_bank = c & 1;", f"{ind}  int c_blk  = c >> 1;"])
-        lines.append(f"{ind}  int in_c_base = c_blk * (H * W);")
+            lines.extend([f"{ind}  int channel_bank = c & 1;", f"{ind}  int channel_block_index = c >> 1;"])
+        lines.append(f"{ind}  int input_channel_base_address = channel_block_index * (H * W);")
         q_rhs = f"{ctx.outer_q_var} * {ctx.N_Q_sp}" if ctx.outer_q_var else "0"
-        lines.append(f"{ind}  int q_base = {q_rhs};")
+        lines.append(f"{ind}  int output_col_base = {q_rhs};")
 
     p_row = f"({ctx.outer_p_var} + {r_var})" if ctx.outer_p_var else r_var
 
@@ -769,13 +770,13 @@ def _emit_seq_compute_body(ctx: _SACtx, r_var: str, indent: str) -> List[str]:
                   f"{seq}for (int {var} = 0; {var} < {fac}; ++{var}) {{  // {dim}:{fac}"]
         seq += "  "
     lines += [
-        f"{seq}int w_idx = (({m_total}) * ((C + in_banks - 1) / in_banks) + c_blk) * (R * S) + {r_var} * S + {s_seq_expr};",
-        f"{seq}DTYPE wv = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];",
-        f"{seq}int in_row_base = in_c_base + {p_row} * W;",
-        f"{seq}int in_col = q_base + {q_flat} + {s_seq_expr};",
-        f"{seq}DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]",
-        f"{seq}                        : dram_in_b1[in_row_base + in_col];",
-        f"{seq}acc[{bank_expr}] += wv * inv;",
+        f"{seq}int weight_dram_index = (({m_total}) * ((C + in_banks - 1) / in_banks) + channel_block_index) * (R * S) + {r_var} * S + {s_seq_expr};",
+        f"{seq}DTYPE weight_value = (channel_bank==0) ? dram_w_b0[weight_dram_index] : dram_w_b1[weight_dram_index];",
+        f"{seq}int input_row_base_address = input_channel_base_address + {p_row} * W;",
+        f"{seq}int input_column_offset = output_col_base + {q_flat} + {s_seq_expr};",
+        f"{seq}DTYPE input_value = (channel_bank==0) ? dram_in_b0[input_row_base_address + input_column_offset]",
+        f"{seq}                                      : dram_in_b1[input_row_base_address + input_column_offset];",
+        f"{seq}accumulator[{bank_expr}] += weight_value * input_value;",
     ]
     for (var, fac), (dim, _, _) in reversed(list(zip(out_loop_vars_f, spec.out_dims))):
         seq = seq[:-2]; lines.append(f"{seq}}}  // {var} ({dim}:{fac})")
@@ -793,7 +794,7 @@ def _emit_reduction_tree_block(ctx: _SACtx, indent: str) -> List[str]:
 
     lines = [
         f"{indent}// ---- reduction: {spec.N_PE} acc → {spec.N_out} outputs ({spec.N_red} inputs each) ----",
-        f"{indent}DTYPE reduced{''.join(f'[{f}]' for _, f, _ in spec.out_dims)};",
+        f"{indent}DTYPE reduced_output{''.join(f'[{f}]' for _, f, _ in spec.out_dims)};",
     ]
     red = indent
     for var, (dim, fac, _) in zip(out_vars, spec.out_dims):
@@ -805,12 +806,12 @@ def _emit_reduction_tree_block(ctx: _SACtx, indent: str) -> List[str]:
         idx = ["?"] * len(spec.all_dims)
         for k, i in enumerate(red_positions): idx[i] = str(combo[k])
         for k, i in enumerate(out_positions): idx[i] = out_vars[k]
-        values.append(f"acc{''.join(f'[{x}]' for x in idx)}")
+        values.append(f"accumulator{''.join(f'[{x}]' for x in idx)}")
 
     stmts, final = _scalar_tree(values)
     for s in stmts:
         lines.append(f"{red}{s}")
-    lines.append(f"{red}reduced{''.join(f'[{v}]' for v in out_vars)} = {final};")
+    lines.append(f"{red}reduced_output{''.join(f'[{v}]' for v in out_vars)} = {final};")
 
     for var, (dim, fac, _) in reversed(list(zip(out_vars, spec.out_dims))):
         red = red[:-2]; lines.append(f"{red}}}  // {var} (reduction)")
@@ -827,21 +828,21 @@ def _emit_writeback_block(ctx: _SACtx, unroll: bool, indent: str) -> List[str]:
     cp_expr   = f"{ctx.outer_p_var}" if ctx.outer_p_var else "0"
     cq_expr   = f"{ctx.outer_q_var}" if ctx.outer_q_var else "0"
     pragma    = "unroll" if unroll else "nounroll"
-    val_expr  = f"reduced{''.join(f'[{v}]' for v, _ in out_loop_vars_f)}" if unroll else f"acc[{bank_expr}]"
+    val_expr  = f"reduced_output{''.join(f'[{v}]' for v, _ in out_loop_vars_f)}" if unroll else f"accumulator[{bank_expr}]"
 
-    lines = [f"{indent}// OutRegister: write acc to banked output ports"]
+    lines = [f"{indent}// OutRegister: write accumulator to banked output ports"]
     wb = indent
     for (var, fac), (dim, _, _) in zip(out_loop_vars_f, spec.out_dims):
         lines += [f"{wb}#pragma GCC {pragma} {fac}", f"{wb}for (int {var} = 0; {var} < {fac}; ++{var}) {{"]
         wb += "  "
     lines += [
-        f"{wb}int out_bank = {bank_expr};",
-        f"{wb}int cm = {cm_expr};",
-        f"{wb}int cp = {cp_expr};",
-        f"{wb}int cq = {cq_expr};",
-        f"{wb}int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;",
-        f"{wb}DTYPE v = {val_expr};",
-        _emit_out_store_switch_fixed("out_bank", spec.N_out, "out_idx_b", "v", wb),
+        f"{wb}int output_bank = {bank_expr};",
+        f"{wb}int output_filter_tile = {cm_expr};",
+        f"{wb}int output_row_tile = {cp_expr};",
+        f"{wb}int output_col_tile = {cq_expr};",
+        f"{wb}int output_dram_offset = (output_filter_tile * Ptiles + output_row_tile) * Qtiles + output_col_tile;",
+        f"{wb}DTYPE output_value = {val_expr};",
+        _emit_out_store_switch_fixed("output_bank", spec.N_out, "output_dram_offset", "output_value", wb),
     ]
     for _ in out_loop_vars_f:
         wb = wb[:-2]; lines.append(f"{wb}}}")
@@ -893,19 +894,19 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: ConvBankSpec, unroll: bool = 
                  f"{indent}for (int {vname} = 0; {vname} < {fac}; ++{vname}) {{"]
         indent += "  "
 
-    r_var = ctx.inner_r_var or "r"
+    r_var = ctx.inner_r_var or "filter_row_offset"
     if not ctx.inner_r_var:
-        code.append(f"{indent}int r = 0;  // R=1 or no inner sequential R loop")
+        code.append(f"{indent}int filter_row_offset = 0;  // R=1 or no inner sequential R loop")
 
     code.extend(_emit_sa_compute_body(ctx, r_var, indent) if unroll
                 else _emit_seq_compute_body(ctx, r_var, indent))
 
-    for _ in ctx.inner_loop_specs:
-        indent = indent[:-2]; code.append(f"{indent}}}  // inner seq")
+    for vname, _fac, _cmt in reversed(ctx.inner_loop_specs):
+        indent = indent[:-2]; code.append(f"{indent}}}  // {vname}")
     code.append("")
 
-    for _ in ctx.outer_red_specs:
-        indent = indent[:-2]; code.append(f"{indent}}}  // outer_red")
+    for vname, _fac, _cmt, _dim in reversed(ctx.outer_red_specs):
+        indent = indent[:-2]; code.append(f"{indent}}}  // {vname}")
     if ctx.outer_red_specs:
         code.append("")
 
@@ -914,8 +915,8 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: ConvBankSpec, unroll: bool = 
 
     code.extend(_emit_writeback_block(ctx, unroll, indent))
 
-    for _ in ctx.outer_out_specs:
-        indent = indent[:-2]; code.append(f"{indent}}}  // outer_out")
+    for vname, _fac, _cmt, _dim in reversed(ctx.outer_out_specs):
+        indent = indent[:-2]; code.append(f"{indent}}}  // {vname}")
 
     code += ["}", ""]
     return "\n".join(code)

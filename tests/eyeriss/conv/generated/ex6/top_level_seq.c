@@ -45,25 +45,25 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
     const int in_banks=2;
 
     // Accumulator: flat 1D at function scope → GCC SROA → 24 scalar regs
-    DTYPE acc[24];
+    DTYPE accumulator[24];
 
     // GlobalBuffer_0 = P:6
     #pragma GCC nounroll
-    for (int gb_0 = 0; gb_0 < 6; ++gb_0) {
+    for (int globalbuffer_0 = 0; globalbuffer_0 < 6; ++globalbuffer_0) {
       // Zero accumulator (nounroll — non-spatial init)
       #pragma GCC nounroll
-      for (int _i = 0; _i < 24; ++_i) acc[_i] = 0.0f;
+      for (int accumulator_dim_index = 0; accumulator_dim_index < 24; ++accumulator_dim_index) accumulator[accumulator_dim_index] = 0.0f;
 
       // WRegister → R:3 (sequential)
       #pragma GCC nounroll
-      for (int r = 0; r < 3; ++r) {
+      for (int wregister_0 = 0; wregister_0 < 3; ++wregister_0) {
         // SARows C:4 -- sequential (reduction)
         #pragma GCC nounroll
         for (int c = 0; c < 4; ++c) {
-          int c_bank = c & 1;
-          int c_blk  = c >> 1;
-          int in_c_base = c_blk * (H * W);
-          int q_base = 0;
+          int channel_bank = c & 1;
+          int channel_block_index = c >> 1;
+          int input_channel_base_address = channel_block_index * (H * W);
+          int output_col_base = 0;
 
           // SARows S:1
           #pragma GCC nounroll
@@ -74,63 +74,63 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
               for (int sacols_0 = 0; sacols_0 < 6; ++sacols_0) {  // Q:6
                 #pragma GCC nounroll
                 for (int sacols_1 = 0; sacols_1 < 2; ++sacols_1) {  // M:2
-                  int w_idx = ((sarows_1*2 + sacols_1) * ((C + in_banks - 1) / in_banks) + c_blk) * (R * S) + r * S + s;
-                  DTYPE wv = (c_bank==0) ? dram_w_b0[w_idx] : dram_w_b1[w_idx];
-                  int in_row_base = in_c_base + (gb_0 + r) * W;
-                  int in_col = q_base + sacols_0 + s;
-                  DTYPE inv = (c_bank==0) ? dram_in_b0[in_row_base + in_col]
-                                          : dram_in_b1[in_row_base + in_col];
-                  acc[sarows_1*12 + sacols_0*2 + sacols_1] += wv * inv;
+                  int weight_dram_index = ((sarows_1*2 + sacols_1) * ((C + in_banks - 1) / in_banks) + channel_block_index) * (R * S) + wregister_0 * S + s;
+                  DTYPE weight_value = (channel_bank==0) ? dram_w_b0[weight_dram_index] : dram_w_b1[weight_dram_index];
+                  int input_row_base_address = input_channel_base_address + (globalbuffer_0 + wregister_0) * W;
+                  int input_column_offset = output_col_base + sacols_0 + s;
+                  DTYPE input_value = (channel_bank==0) ? dram_in_b0[input_row_base_address + input_column_offset]
+                                                        : dram_in_b1[input_row_base_address + input_column_offset];
+                  accumulator[sarows_1*12 + sacols_0*2 + sacols_1] += weight_value * input_value;
                 }  // sacols_1 (M:2)
               }  // sacols_0 (Q:6)
             }  // sarows_1 (M:2)
           }  // s
         }  // c
 
-      }  // inner seq
+      }  // wregister_0
 
-      // OutRegister: write acc to banked output ports
+      // OutRegister: write accumulator to banked output ports
       #pragma GCC nounroll 2
       for (int sarows_1 = 0; sarows_1 < 2; ++sarows_1) {
         #pragma GCC nounroll 6
         for (int sacols_0 = 0; sacols_0 < 6; ++sacols_0) {
           #pragma GCC nounroll 2
           for (int sacols_1 = 0; sacols_1 < 2; ++sacols_1) {
-            int out_bank = sarows_1*12 + sacols_0*2 + sacols_1;
-            int cm = 0;
-            int cp = gb_0;
-            int cq = 0;
-            int out_idx_b = (cm * Ptiles + cp) * Qtiles + cq;
-            DTYPE v = acc[sarows_1*12 + sacols_0*2 + sacols_1];
-            switch(out_bank) {
-              case 0: dram_out_b0[out_idx_b] = v; break;
-              case 1: dram_out_b1[out_idx_b] = v; break;
-              case 2: dram_out_b2[out_idx_b] = v; break;
-              case 3: dram_out_b3[out_idx_b] = v; break;
-              case 4: dram_out_b4[out_idx_b] = v; break;
-              case 5: dram_out_b5[out_idx_b] = v; break;
-              case 6: dram_out_b6[out_idx_b] = v; break;
-              case 7: dram_out_b7[out_idx_b] = v; break;
-              case 8: dram_out_b8[out_idx_b] = v; break;
-              case 9: dram_out_b9[out_idx_b] = v; break;
-              case 10: dram_out_b10[out_idx_b] = v; break;
-              case 11: dram_out_b11[out_idx_b] = v; break;
-              case 12: dram_out_b12[out_idx_b] = v; break;
-              case 13: dram_out_b13[out_idx_b] = v; break;
-              case 14: dram_out_b14[out_idx_b] = v; break;
-              case 15: dram_out_b15[out_idx_b] = v; break;
-              case 16: dram_out_b16[out_idx_b] = v; break;
-              case 17: dram_out_b17[out_idx_b] = v; break;
-              case 18: dram_out_b18[out_idx_b] = v; break;
-              case 19: dram_out_b19[out_idx_b] = v; break;
-              case 20: dram_out_b20[out_idx_b] = v; break;
-              case 21: dram_out_b21[out_idx_b] = v; break;
-              case 22: dram_out_b22[out_idx_b] = v; break;
-              case 23: dram_out_b23[out_idx_b] = v; break;
+            int output_bank = sarows_1*12 + sacols_0*2 + sacols_1;
+            int output_filter_tile = 0;
+            int output_row_tile = globalbuffer_0;
+            int output_col_tile = 0;
+            int output_dram_offset = (output_filter_tile * Ptiles + output_row_tile) * Qtiles + output_col_tile;
+            DTYPE output_value = accumulator[sarows_1*12 + sacols_0*2 + sacols_1];
+            switch(output_bank) {
+              case 0: dram_out_b0[output_dram_offset] = output_value; break;
+              case 1: dram_out_b1[output_dram_offset] = output_value; break;
+              case 2: dram_out_b2[output_dram_offset] = output_value; break;
+              case 3: dram_out_b3[output_dram_offset] = output_value; break;
+              case 4: dram_out_b4[output_dram_offset] = output_value; break;
+              case 5: dram_out_b5[output_dram_offset] = output_value; break;
+              case 6: dram_out_b6[output_dram_offset] = output_value; break;
+              case 7: dram_out_b7[output_dram_offset] = output_value; break;
+              case 8: dram_out_b8[output_dram_offset] = output_value; break;
+              case 9: dram_out_b9[output_dram_offset] = output_value; break;
+              case 10: dram_out_b10[output_dram_offset] = output_value; break;
+              case 11: dram_out_b11[output_dram_offset] = output_value; break;
+              case 12: dram_out_b12[output_dram_offset] = output_value; break;
+              case 13: dram_out_b13[output_dram_offset] = output_value; break;
+              case 14: dram_out_b14[output_dram_offset] = output_value; break;
+              case 15: dram_out_b15[output_dram_offset] = output_value; break;
+              case 16: dram_out_b16[output_dram_offset] = output_value; break;
+              case 17: dram_out_b17[output_dram_offset] = output_value; break;
+              case 18: dram_out_b18[output_dram_offset] = output_value; break;
+              case 19: dram_out_b19[output_dram_offset] = output_value; break;
+              case 20: dram_out_b20[output_dram_offset] = output_value; break;
+              case 21: dram_out_b21[output_dram_offset] = output_value; break;
+              case 22: dram_out_b22[output_dram_offset] = output_value; break;
+              case 23: dram_out_b23[output_dram_offset] = output_value; break;
               default: break;
             }
           }
         }
       }
-    }  // outer_out
+    }  // globalbuffer_0
 }

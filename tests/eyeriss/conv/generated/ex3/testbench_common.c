@@ -180,26 +180,26 @@ int main() {
       for (int p = 0; p < 4; ++p)
         for (int q = 0; q < 4; ++q) {
 
-          int m_local = m % 4;
-          int sacols_1 = m_local;
-          int q_local = q % 2;
-          int sacols_0 = q_local;
-          int bank = sacols_0*4 + sacols_1;
-          int cm = m / 4;
-          int cq = q / 2;
-          int cp = p;
-          int idx_b = (cm * 4 + cp) * 2 + cq;
+          int local_filter_index = m % 4;
+          int sacols_1 = local_filter_index;
+          int local_col_index = q % 2;
+          int sacols_0 = local_col_index;
+          int output_bank_index = sacols_0*4 + sacols_1;
+          int output_filter_tile = m / 4;
+          int output_col_tile = q / 2;
+          int output_row_tile = p;
+          int output_dram_offset = (output_filter_tile * 4 + output_row_tile) * 2 + output_col_tile;
 
           int out_idx = m*4*4 + p*4 + q;
-          switch(bank) {
-            case 0: out_full[out_idx] = dram_out_b0[idx_b]; break;
-            case 1: out_full[out_idx] = dram_out_b1[idx_b]; break;
-            case 2: out_full[out_idx] = dram_out_b2[idx_b]; break;
-            case 3: out_full[out_idx] = dram_out_b3[idx_b]; break;
-            case 4: out_full[out_idx] = dram_out_b4[idx_b]; break;
-            case 5: out_full[out_idx] = dram_out_b5[idx_b]; break;
-            case 6: out_full[out_idx] = dram_out_b6[idx_b]; break;
-            case 7: out_full[out_idx] = dram_out_b7[idx_b]; break;
+          switch(output_bank_index) {
+            case 0: out_full[out_idx] = dram_out_b0[output_dram_offset]; break;
+            case 1: out_full[out_idx] = dram_out_b1[output_dram_offset]; break;
+            case 2: out_full[out_idx] = dram_out_b2[output_dram_offset]; break;
+            case 3: out_full[out_idx] = dram_out_b3[output_dram_offset]; break;
+            case 4: out_full[out_idx] = dram_out_b4[output_dram_offset]; break;
+            case 5: out_full[out_idx] = dram_out_b5[output_dram_offset]; break;
+            case 6: out_full[out_idx] = dram_out_b6[output_dram_offset]; break;
+            case 7: out_full[out_idx] = dram_out_b7[output_dram_offset]; break;
             default: out_full[out_idx] = 0.0f; break;
           }
         }
