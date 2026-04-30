@@ -1,14 +1,14 @@
-Compiling top_level_sa.c
-Compiling mdpi_driver.cpp
 Compiling libmdpi.so
-Compiling testbench testbench_common.c
+Compiling mdpi_driver.cpp
+Compiling top_level_sa.c
 Compiling mdpi_wrapper.cpp
+Compiling testbench testbench_common.c
 cc1plus: warning: command line option ‘-Wno-implicit-function-declaration’ is valid for C/ObjC but not for C++
 cc1plus: warning: command line option ‘-Wno-int-conversion’ is valid for C/ObjC but not for C++
 cc1plus: warning: unrecognized command line option ‘-Wno-incompatible-function-pointer-types’
 Linking libmdpi_driver.so
 Linking testbench
-make: Entering directory '/workspace/tests/eyeriss/conv/generated/ex1/Bambu_outputs/sa/n8/HLS_output/beh_sim/verilator_obj'
+make: Entering directory '/workspace/tests/eyeriss/conv/generated/ex1/Bambu_outputs/sa/n32/HLS_output/beh_sim/verilator_obj'
 g++  -I.  -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-sign-compare -Wno-uninitialized -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable -Wno-shadow  -fstrict-aliasing -DVCD_OUT_DIR=HLS_output/simulation     -c -o sim_main.o HLS_output/beh_sim/sim_main.cpp
 g++  -I.  -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-sign-compare -Wno-uninitialized -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable -Wno-shadow  -fstrict-aliasing -DVCD_OUT_DIR=HLS_output/simulation     -c -o verilated.o /usr/share/verilator/include/verilated.cpp
 g++  -I.  -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-sign-compare -Wno-uninitialized -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable -Wno-shadow  -fstrict-aliasing -DVCD_OUT_DIR=HLS_output/simulation     -c -o verilated_dpi.o /usr/share/verilator/include/verilated_dpi.cpp
