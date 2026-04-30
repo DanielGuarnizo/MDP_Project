@@ -24,7 +24,7 @@
 #include <mdpi/mdpi_user.h>
 #endif
 
-void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dram_w_b1, DTYPE *dram_out_b0, DTYPE *dram_out_b1, DTYPE *dram_out_b2, DTYPE *dram_out_b3, DTYPE *dram_out_b4, DTYPE *dram_out_b5, DTYPE *dram_out_b6, DTYPE *dram_out_b7);
+void top_level(DTYPE *dram_input_p0, DTYPE *dram_input_p1, DTYPE *dram_weight_p0, DTYPE *dram_weight_p1, DTYPE *dram_output_p0, DTYPE *dram_output_p1, DTYPE *dram_output_p2, DTYPE *dram_output_p3, DTYPE *dram_output_p4, DTYPE *dram_output_p5, DTYPE *dram_output_p6, DTYPE *dram_output_p7);
 
 
 
@@ -86,72 +86,82 @@ int main() {
     init(in_full, w_full, out_full, gold, in_full_e, w_full_e, out_full_e);
     golden_reference(in_full, w_full, gold);
 
-    // Banked inputs/weights
-    DTYPE *dram_in_b0 = (DTYPE*)malloc(576 * sizeof(DTYPE));
-    DTYPE *dram_in_b1 = (DTYPE*)malloc(576 * sizeof(DTYPE));
-    DTYPE *dram_w_b0  = (DTYPE*)malloc(800 * sizeof(DTYPE));
-    DTYPE *dram_w_b1  = (DTYPE*)malloc(800 * sizeof(DTYPE));
-    if (!dram_in_b0 || !dram_in_b1 || !dram_w_b0 || !dram_w_b1) {
-        printf("Bank allocation failed!\n");
+    // Input ports
+    DTYPE *dram_input_p0  = (DTYPE*)malloc(576 * sizeof(DTYPE));
+    DTYPE *dram_input_p1  = (DTYPE*)malloc(576 * sizeof(DTYPE));
+
+    if (!dram_input_p0 || !dram_input_p1) {
+        printf("Input port allocation failed!\n");
         return -1;
     }
 
-    // Outputs
-    DTYPE *dram_out_b0 = (DTYPE*)malloc(64 * sizeof(DTYPE));
-    if (!dram_out_b0) { printf("Out bank 0 alloc failed!\n"); return -1; }
-    DTYPE *dram_out_b1 = (DTYPE*)malloc(64 * sizeof(DTYPE));
-    if (!dram_out_b1) { printf("Out bank 1 alloc failed!\n"); return -1; }
-    DTYPE *dram_out_b2 = (DTYPE*)malloc(64 * sizeof(DTYPE));
-    if (!dram_out_b2) { printf("Out bank 2 alloc failed!\n"); return -1; }
-    DTYPE *dram_out_b3 = (DTYPE*)malloc(64 * sizeof(DTYPE));
-    if (!dram_out_b3) { printf("Out bank 3 alloc failed!\n"); return -1; }
-    DTYPE *dram_out_b4 = (DTYPE*)malloc(64 * sizeof(DTYPE));
-    if (!dram_out_b4) { printf("Out bank 4 alloc failed!\n"); return -1; }
-    DTYPE *dram_out_b5 = (DTYPE*)malloc(64 * sizeof(DTYPE));
-    if (!dram_out_b5) { printf("Out bank 5 alloc failed!\n"); return -1; }
-    DTYPE *dram_out_b6 = (DTYPE*)malloc(64 * sizeof(DTYPE));
-    if (!dram_out_b6) { printf("Out bank 6 alloc failed!\n"); return -1; }
-    DTYPE *dram_out_b7 = (DTYPE*)malloc(64 * sizeof(DTYPE));
-    if (!dram_out_b7) { printf("Out bank 7 alloc failed!\n"); return -1; }
+    // Weight ports
+    DTYPE *dram_weight_p0 = (DTYPE*)malloc(800 * sizeof(DTYPE));
+    DTYPE *dram_weight_p1 = (DTYPE*)malloc(800 * sizeof(DTYPE));
+
+    if (!dram_weight_p0 || !dram_weight_p1) {
+        printf("Weight port allocation failed!\n");
+        return -1;
+    }
+
+    // Output ports
+    DTYPE *dram_output_p0 = (DTYPE*)malloc(64 * sizeof(DTYPE));
+    if (!dram_output_p0) { printf("Output port 0 alloc failed!\n"); return -1; }
+    DTYPE *dram_output_p1 = (DTYPE*)malloc(64 * sizeof(DTYPE));
+    if (!dram_output_p1) { printf("Output port 1 alloc failed!\n"); return -1; }
+    DTYPE *dram_output_p2 = (DTYPE*)malloc(64 * sizeof(DTYPE));
+    if (!dram_output_p2) { printf("Output port 2 alloc failed!\n"); return -1; }
+    DTYPE *dram_output_p3 = (DTYPE*)malloc(64 * sizeof(DTYPE));
+    if (!dram_output_p3) { printf("Output port 3 alloc failed!\n"); return -1; }
+    DTYPE *dram_output_p4 = (DTYPE*)malloc(64 * sizeof(DTYPE));
+    if (!dram_output_p4) { printf("Output port 4 alloc failed!\n"); return -1; }
+    DTYPE *dram_output_p5 = (DTYPE*)malloc(64 * sizeof(DTYPE));
+    if (!dram_output_p5) { printf("Output port 5 alloc failed!\n"); return -1; }
+    DTYPE *dram_output_p6 = (DTYPE*)malloc(64 * sizeof(DTYPE));
+    if (!dram_output_p6) { printf("Output port 6 alloc failed!\n"); return -1; }
+    DTYPE *dram_output_p7 = (DTYPE*)malloc(64 * sizeof(DTYPE));
+    if (!dram_output_p7) { printf("Output port 7 alloc failed!\n"); return -1; }
 
 
-    // Zero
-    for (size_t i = 0; i < 576; ++i) { dram_in_b0[i]=0.0f; dram_in_b1[i]=0.0f; }
-    for (size_t i = 0; i < 800;  ++i) { dram_w_b0[i]=0.0f; dram_w_b1[i]=0.0f; }
-    for (size_t i = 0; i < 64; ++i) dram_out_b0[i] = 0.0f;
-    for (size_t i = 0; i < 64; ++i) dram_out_b1[i] = 0.0f;
-    for (size_t i = 0; i < 64; ++i) dram_out_b2[i] = 0.0f;
-    for (size_t i = 0; i < 64; ++i) dram_out_b3[i] = 0.0f;
-    for (size_t i = 0; i < 64; ++i) dram_out_b4[i] = 0.0f;
-    for (size_t i = 0; i < 64; ++i) dram_out_b5[i] = 0.0f;
-    for (size_t i = 0; i < 64; ++i) dram_out_b6[i] = 0.0f;
-    for (size_t i = 0; i < 64; ++i) dram_out_b7[i] = 0.0f;
+    // Zero all ports
+    for (size_t i = 0; i < 576; ++i) dram_input_p0[i] = 0.0f;
+    for (size_t i = 0; i < 576; ++i) dram_input_p1[i] = 0.0f;
+    for (size_t i = 0; i < 800; ++i) dram_weight_p0[i] = 0.0f;
+    for (size_t i = 0; i < 800; ++i) dram_weight_p1[i] = 0.0f;
+    for (size_t i = 0; i < 64; ++i) dram_output_p0[i] = 0.0f;
+    for (size_t i = 0; i < 64; ++i) dram_output_p1[i] = 0.0f;
+    for (size_t i = 0; i < 64; ++i) dram_output_p2[i] = 0.0f;
+    for (size_t i = 0; i < 64; ++i) dram_output_p3[i] = 0.0f;
+    for (size_t i = 0; i < 64; ++i) dram_output_p4[i] = 0.0f;
+    for (size_t i = 0; i < 64; ++i) dram_output_p5[i] = 0.0f;
+    for (size_t i = 0; i < 64; ++i) dram_output_p6[i] = 0.0f;
+    for (size_t i = 0; i < 64; ++i) dram_output_p7[i] = 0.0f;
 
-    // Scatter input into 2 banks by c%2
+    // Scatter input into 2 ports by c % 2
     for (int c = 0; c < 8; ++c) {
-        int bank = c & 1;
-        int blk  = c >> 1;
+        int port_index = c % 2;
+        int blk        = c / 2;
         for (int y = 0; y < 12; ++y) {
             for (int x = 0; x < 12; ++x) {
                 int full_idx = c*12*12 + y*12 + x;
                 int b_idx    = blk*12*12 + y*12 + x;
-                if (bank==0) dram_in_b0[b_idx] = in_full[full_idx];
-                else         dram_in_b1[b_idx] = in_full[full_idx];
+                if (port_index == 0) dram_input_p0[b_idx] = in_full[full_idx];
+                if (port_index == 1) dram_input_p1[b_idx] = in_full[full_idx];
             }
         }
     }
 
-    // Scatter weights into 2 banks by c%2
+    // Scatter weights into 2 ports by c % 2
     for (int m = 0; m < 8; ++m) {
       for (int c = 0; c < 8; ++c) {
-        int bank = c & 1;
-        int blk  = c >> 1;
+        int port_index = c % 2;
+        int blk        = c / 2;
         for (int r = 0; r < 5; ++r)
           for (int s = 0; s < 5; ++s) {
             int full_idx = m*8*5*5 + c*5*5 + r*5 + s;
             int b_idx    = (m*4 + blk)*5*5 + r*5 + s;
-            if (bank==0) dram_w_b0[b_idx] = w_full[full_idx];
-            else         dram_w_b1[b_idx] = w_full[full_idx];
+                if (port_index == 0) dram_weight_p0[b_idx] = w_full[full_idx];
+                if (port_index == 1) dram_weight_p1[b_idx] = w_full[full_idx];
           }
       }
     }
@@ -173,9 +183,9 @@ int main() {
 #endif
 
     printf("Running HLS top_level function...\n");
-    top_level(dram_in_b0, dram_in_b1, dram_w_b0, dram_w_b1, dram_out_b0, dram_out_b1, dram_out_b2, dram_out_b3, dram_out_b4, dram_out_b5, dram_out_b6, dram_out_b7);
+    top_level(dram_input_p0, dram_input_p1, dram_weight_p0, dram_weight_p1, dram_output_p0, dram_output_p1, dram_output_p2, dram_output_p3, dram_output_p4, dram_output_p5, dram_output_p6, dram_output_p7);
 
-    // Gather out banks into out_full
+    // Gather output ports into out_full
     for (int m = 0; m < 8; ++m)
       for (int p = 0; p < 8; ++p)
         for (int q = 0; q < 8; ++q) {
@@ -192,14 +202,14 @@ int main() {
 
           int out_idx = m*8*8 + p*8 + q;
           switch(output_bank_index) {
-            case 0: out_full[out_idx] = dram_out_b0[output_dram_offset]; break;
-            case 1: out_full[out_idx] = dram_out_b1[output_dram_offset]; break;
-            case 2: out_full[out_idx] = dram_out_b2[output_dram_offset]; break;
-            case 3: out_full[out_idx] = dram_out_b3[output_dram_offset]; break;
-            case 4: out_full[out_idx] = dram_out_b4[output_dram_offset]; break;
-            case 5: out_full[out_idx] = dram_out_b5[output_dram_offset]; break;
-            case 6: out_full[out_idx] = dram_out_b6[output_dram_offset]; break;
-            case 7: out_full[out_idx] = dram_out_b7[output_dram_offset]; break;
+            case 0: out_full[out_idx] = dram_output_p0[output_dram_offset]; break;
+            case 1: out_full[out_idx] = dram_output_p1[output_dram_offset]; break;
+            case 2: out_full[out_idx] = dram_output_p2[output_dram_offset]; break;
+            case 3: out_full[out_idx] = dram_output_p3[output_dram_offset]; break;
+            case 4: out_full[out_idx] = dram_output_p4[output_dram_offset]; break;
+            case 5: out_full[out_idx] = dram_output_p5[output_dram_offset]; break;
+            case 6: out_full[out_idx] = dram_output_p6[output_dram_offset]; break;
+            case 7: out_full[out_idx] = dram_output_p7[output_dram_offset]; break;
             default: out_full[out_idx] = 0.0f; break;
           }
         }
@@ -210,15 +220,18 @@ int main() {
     else printf("FAILURE: Found %d mismatches.\n", e);
 
     free(in_full); free(w_full); free(out_full); free(gold);
-    free(dram_in_b0); free(dram_in_b1); free(dram_w_b0); free(dram_w_b1);
-    free(dram_out_b0);
-    free(dram_out_b1);
-    free(dram_out_b2);
-    free(dram_out_b3);
-    free(dram_out_b4);
-    free(dram_out_b5);
-    free(dram_out_b6);
-    free(dram_out_b7);
+    free(dram_input_p0);
+    free(dram_input_p1);
+    free(dram_weight_p0);
+    free(dram_weight_p1);
+    free(dram_output_p0);
+    free(dram_output_p1);
+    free(dram_output_p2);
+    free(dram_output_p3);
+    free(dram_output_p4);
+    free(dram_output_p5);
+    free(dram_output_p6);
+    free(dram_output_p7);
 
     return e;
 }

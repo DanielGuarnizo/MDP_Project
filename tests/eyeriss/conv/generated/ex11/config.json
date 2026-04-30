@@ -1,0 +1,24 @@
+{
+  "factorflow": {
+    "main_cli": "./FactorFlow/main_cli.py",
+    "architecture": "eyeriss-conv",
+    "args": [
+      64,
+      56,
+      56,
+      64,
+      3,
+      3
+    ],
+    "force": false
+  },
+  "bambu": {
+    "clock_period": 5,
+    "compiler": "I386_GCC8",
+    "opt_level": 3,
+    "device": { "name": "xcu55c-2Lfsvh2892-VVD", "physical_ports": 16 }
+  },
+  "layout": {
+    "ff_output_dir": "FF_output"
+  }
+}

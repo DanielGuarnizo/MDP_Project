@@ -22,20 +22,21 @@ bambu "$TOP" \
   --generate-interface=INFER \
   --compiler=I386_GCC8 \
   --clock-period=5 \
+  --device-name=xc7z020-1clg484-VVD \
   -O3 -v4 \
   --generate-tb="$TB" \
-  --tb-param-size=dram_in_b0:432 \
-  --tb-param-size=dram_in_b1:432 \
-  --tb-param-size=dram_w_b0:576 \
-  --tb-param-size=dram_w_b1:576 \
-  --tb-param-size=dram_out_b0:32 \
-  --tb-param-size=dram_out_b1:32 \
-  --tb-param-size=dram_out_b2:32 \
-  --tb-param-size=dram_out_b3:32 \
-  --tb-param-size=dram_out_b4:32 \
-  --tb-param-size=dram_out_b5:32 \
-  --tb-param-size=dram_out_b6:32 \
-  --tb-param-size=dram_out_b7:32 \
+  --tb-param-size=dram_input_p0:432 \
+  --tb-param-size=dram_input_p1:432 \
+  --tb-param-size=dram_weight_p0:576 \
+  --tb-param-size=dram_weight_p1:576 \
+  --tb-param-size=dram_output_p0:32 \
+  --tb-param-size=dram_output_p1:32 \
+  --tb-param-size=dram_output_p2:32 \
+  --tb-param-size=dram_output_p3:32 \
+  --tb-param-size=dram_output_p4:32 \
+  --tb-param-size=dram_output_p5:32 \
+  --tb-param-size=dram_output_p6:32 \
+  --tb-param-size=dram_output_p7:32 \
 ${FLOAT_MUL_FLAG:+$FLOAT_MUL_FLAG} \
   ${FLOAT_ADD_FLAG:+$FLOAT_ADD_FLAG} \
   --simulate

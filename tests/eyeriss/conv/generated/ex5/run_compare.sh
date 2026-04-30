@@ -50,20 +50,21 @@ run_bambu () {
       --generate-interface=INFER \
       --compiler=I386_GCC8 \
       --clock-period=5 \
+      --device-name=xc7z020-1clg484-VVD \
       -O3 -v4 \
       --generate-tb="../../../${TB}" \
-      --tb-param-size=dram_in_b0:2304 \
-      --tb-param-size=dram_in_b1:2304 \
-      --tb-param-size=dram_w_b0:3200 \
-      --tb-param-size=dram_w_b1:3200 \
-      --tb-param-size=dram_out_b0:256 \
-      --tb-param-size=dram_out_b1:256 \
-      --tb-param-size=dram_out_b2:256 \
-      --tb-param-size=dram_out_b3:256 \
-      --tb-param-size=dram_out_b4:256 \
-      --tb-param-size=dram_out_b5:256 \
-      --tb-param-size=dram_out_b6:256 \
-      --tb-param-size=dram_out_b7:256 \
+      --tb-param-size=dram_input_p0:2304 \
+      --tb-param-size=dram_input_p1:2304 \
+      --tb-param-size=dram_weight_p0:3200 \
+      --tb-param-size=dram_weight_p1:3200 \
+      --tb-param-size=dram_output_p0:256 \
+      --tb-param-size=dram_output_p1:256 \
+      --tb-param-size=dram_output_p2:256 \
+      --tb-param-size=dram_output_p3:256 \
+      --tb-param-size=dram_output_p4:256 \
+      --tb-param-size=dram_output_p5:256 \
+      --tb-param-size=dram_output_p6:256 \
+      --tb-param-size=dram_output_p7:256 \
 ${float_mul_flag:+${float_mul_flag}} \
       --simulate
   ) > "${log}" 2>&1

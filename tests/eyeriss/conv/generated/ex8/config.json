@@ -15,7 +15,8 @@
   "bambu": {
     "clock_period": 5,
     "compiler": "I386_GCC8",
-    "opt_level": 3
+    "opt_level": 3,
+    "device": { "name": "xc7z020-1clg484-VVD", "physical_ports": 32 }
   },
   "layout": {
     "ff_output_dir": "FF_output"

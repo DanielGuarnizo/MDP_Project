@@ -1,32 +1,30 @@
 #define DTYPE float
-#define M_TOTAL 4
-#define P_TOTAL 4
-#define Q_TOTAL 4
-#define C_TOTAL 4
-#define R_TOTAL 3
-#define S_TOTAL 3
 
-/* AXI pragmas for parallel memory buses */
-#pragma HLS interface port = dram_in_b0 mode = m_axi offset = direct bundle = gmem_in0
-#pragma HLS interface port = dram_in_b1 mode = m_axi offset = direct bundle = gmem_in1
-#pragma HLS interface port = dram_w_b0  mode = m_axi offset = direct bundle = gmem_w0
-#pragma HLS interface port = dram_w_b1  mode = m_axi offset = direct bundle = gmem_w1
-#pragma HLS interface port = dram_out_b0 mode = m_axi offset = direct bundle = gmem_out0
-#pragma HLS interface port = dram_out_b1 mode = m_axi offset = direct bundle = gmem_out1
-#pragma HLS interface port = dram_out_b2 mode = m_axi offset = direct bundle = gmem_out2
-#pragma HLS interface port = dram_out_b3 mode = m_axi offset = direct bundle = gmem_out3
-#pragma HLS interface port = dram_out_b4 mode = m_axi offset = direct bundle = gmem_out4
-#pragma HLS interface port = dram_out_b5 mode = m_axi offset = direct bundle = gmem_out5
-#pragma HLS interface port = dram_out_b6 mode = m_axi offset = direct bundle = gmem_out6
-#pragma HLS interface port = dram_out_b7 mode = m_axi offset = direct bundle = gmem_out7
+/* AXI pragmas: inputs and outputs share bundles (time-multiplexed) */
+#pragma HLS interface port = dram_input_p0 mode = m_axi offset = direct bundle = gmem_0
+#pragma HLS interface port = dram_input_p1 mode = m_axi offset = direct bundle = gmem_1
+#pragma HLS interface port = dram_input_p2 mode = m_axi offset = direct bundle = gmem_2
+#pragma HLS interface port = dram_input_p3 mode = m_axi offset = direct bundle = gmem_3
+#pragma HLS interface port = dram_weight_p0 mode = m_axi offset = direct bundle = gmem_4
+#pragma HLS interface port = dram_weight_p1 mode = m_axi offset = direct bundle = gmem_5
+#pragma HLS interface port = dram_weight_p2 mode = m_axi offset = direct bundle = gmem_6
+#pragma HLS interface port = dram_weight_p3 mode = m_axi offset = direct bundle = gmem_7
+#pragma HLS interface port = dram_output_p0 mode = m_axi offset = direct bundle = gmem_0
+#pragma HLS interface port = dram_output_p1 mode = m_axi offset = direct bundle = gmem_1
+#pragma HLS interface port = dram_output_p2 mode = m_axi offset = direct bundle = gmem_2
+#pragma HLS interface port = dram_output_p3 mode = m_axi offset = direct bundle = gmem_3
+#pragma HLS interface port = dram_output_p4 mode = m_axi offset = direct bundle = gmem_4
+#pragma HLS interface port = dram_output_p5 mode = m_axi offset = direct bundle = gmem_5
+#pragma HLS interface port = dram_output_p6 mode = m_axi offset = direct bundle = gmem_6
+#pragma HLS interface port = dram_output_p7 mode = m_axi offset = direct bundle = gmem_7
 
-void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dram_w_b1, DTYPE *dram_out_b0, DTYPE *dram_out_b1, DTYPE *dram_out_b2, DTYPE *dram_out_b3, DTYPE *dram_out_b4, DTYPE *dram_out_b5, DTYPE *dram_out_b6, DTYPE *dram_out_b7)
+void top_level(DTYPE *dram_input_p0, DTYPE *dram_input_p1, DTYPE *dram_input_p2, DTYPE *dram_input_p3, DTYPE *dram_weight_p0, DTYPE *dram_weight_p1, DTYPE *dram_weight_p2, DTYPE *dram_weight_p3, DTYPE *dram_output_p0, DTYPE *dram_output_p1, DTYPE *dram_output_p2, DTYPE *dram_output_p3, DTYPE *dram_output_p4, DTYPE *dram_output_p5, DTYPE *dram_output_p6, DTYPE *dram_output_p7)
 {
     // SA (weight-preload) Eyeriss CONV — loop structure mirrors FF mapping hierarchy
     const int M=4, P=4, Q=4, C=4, R=3, S=3;
     const int H=6, W=6;
     const int Ptiles=4, Qtiles=2;
-    const int in_banks=2;
+    const int input_ports=4;
 
     // sarows_0 → SARows_0 = S:3
     // sarows_1 → SARows_1 = C:4
@@ -69,10 +67,16 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
               #pragma GCC unroll 4
               for (int sacols_1 = 0; sacols_1 < 4; ++sacols_1) {
                 int global_channel_index = (sarows_1);
-                int channel_bank = global_channel_index & 1;
-                int channel_block_index = global_channel_index >> 1;
-                int weight_dram_index = ((sacols_1) * ((C + in_banks - 1) / in_banks) + channel_block_index) * (R * S) + wregister_0 * S + sarows_0;
-                weight_tile[sarows_0][sarows_1][sacols_1] = (channel_bank==0) ? dram_w_b0[weight_dram_index] : dram_w_b1[weight_dram_index];
+                int weight_port_index = global_channel_index % input_ports;
+                int channel_block_index = global_channel_index / input_ports;
+                int weight_dram_index = ((sacols_1) * ((C + input_ports - 1) / input_ports) + channel_block_index) * (R * S) + wregister_0 * S + sarows_0;
+                switch(weight_port_index) {
+                  case 0: weight_tile[sarows_0][sarows_1][sacols_1] = dram_weight_p0[weight_dram_index]; break;
+                  case 1: weight_tile[sarows_0][sarows_1][sacols_1] = dram_weight_p1[weight_dram_index]; break;
+                  case 2: weight_tile[sarows_0][sarows_1][sacols_1] = dram_weight_p2[weight_dram_index]; break;
+                  case 3: weight_tile[sarows_0][sarows_1][sacols_1] = dram_weight_p3[weight_dram_index]; break;
+                  default: weight_tile[sarows_0][sarows_1][sacols_1] = 0.0f; break;
+                }
               }  // sacols_1 (preload)
             }  // sarows_1 (preload)
           }  // sarows_0 (preload)
@@ -90,14 +94,20 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
                 #pragma GCC unroll 4
                 for (int sacols_1 = 0; sacols_1 < 4; ++sacols_1) {  // M:4
                   int global_channel_index = (sarows_1);
-                  int channel_bank = global_channel_index & 1;
-                  int channel_block_index = global_channel_index >> 1;
+                  int input_port_index = global_channel_index % input_ports;
+                  int channel_block_index = global_channel_index / input_ports;
                   int input_channel_base_address = channel_block_index * (H * W);
                   int input_row_base_address = input_channel_base_address + (globalbuffer_0 + wregister_0) * W;
                   int input_column_offset = output_col_base + sacols_0 + sarows_0;
                   DTYPE weight_value = weight_tile[sarows_0][sarows_1][sacols_1];
-                  DTYPE input_value = (channel_bank==0) ? dram_in_b0[input_row_base_address + input_column_offset]
-                                                        : dram_in_b1[input_row_base_address + input_column_offset];
+                  DTYPE input_value;
+                  switch(input_port_index) {
+                    case 0: input_value = dram_input_p0[input_row_base_address + input_column_offset]; break;
+                    case 1: input_value = dram_input_p1[input_row_base_address + input_column_offset]; break;
+                    case 2: input_value = dram_input_p2[input_row_base_address + input_column_offset]; break;
+                    case 3: input_value = dram_input_p3[input_row_base_address + input_column_offset]; break;
+                    default: input_value = 0.0f; break;
+                  }
                   product[sarows_0][sarows_1][sacols_0][sacols_1] = weight_value * input_value;
                 }  // sacols_1 (M:4)
               }  // sacols_0 (Q:2)
@@ -142,7 +152,7 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
           }  // sacols_1 (reduction)
         }  // sacols_0 (reduction)
 
-        // OutRegister: write accumulator to banked output ports
+        // OutRegister: write accumulator to output DRAM ports
         #pragma GCC unroll 2
         for (int sacols_0 = 0; sacols_0 < 2; ++sacols_0) {
           #pragma GCC unroll 4
@@ -154,14 +164,14 @@ void top_level(DTYPE *dram_in_b0, DTYPE *dram_in_b1, DTYPE *dram_w_b0, DTYPE *dr
             int output_dram_offset = (output_filter_tile * Ptiles + output_row_tile) * Qtiles + output_col_tile;
             DTYPE output_value = reduced_output[sacols_0][sacols_1];
             switch(output_bank) {
-              case 0: dram_out_b0[output_dram_offset] = output_value; break;
-              case 1: dram_out_b1[output_dram_offset] = output_value; break;
-              case 2: dram_out_b2[output_dram_offset] = output_value; break;
-              case 3: dram_out_b3[output_dram_offset] = output_value; break;
-              case 4: dram_out_b4[output_dram_offset] = output_value; break;
-              case 5: dram_out_b5[output_dram_offset] = output_value; break;
-              case 6: dram_out_b6[output_dram_offset] = output_value; break;
-              case 7: dram_out_b7[output_dram_offset] = output_value; break;
+              case 0: dram_output_p0[output_dram_offset] = output_value; break;
+              case 1: dram_output_p1[output_dram_offset] = output_value; break;
+              case 2: dram_output_p2[output_dram_offset] = output_value; break;
+              case 3: dram_output_p3[output_dram_offset] = output_value; break;
+              case 4: dram_output_p4[output_dram_offset] = output_value; break;
+              case 5: dram_output_p5[output_dram_offset] = output_value; break;
+              case 6: dram_output_p6[output_dram_offset] = output_value; break;
+              case 7: dram_output_p7[output_dram_offset] = output_value; break;
               default: break;
             }
           }

@@ -84,7 +84,7 @@ class SADimSpec:
             lname = level.lower().replace(" ", "")
             k = counter.get(lname, 0)
             counter[lname] = k + 1
-            lines.append(f"// {lname}_{k} \u2192 {level}_{k} = {dim}:{fac}")
+            lines.append(f"// {lname}_{k} → {level}_{k} = {dim}:{fac}")
         return lines
 
 
@@ -297,15 +297,27 @@ def generate_experiment(mapping: MappingInfo, config: Dict[str, Any], out_dir: P
             f"[eyeriss_generator] Expected arch_workload to end with '-conv', got {aw!r}"
         )
 
-    # --- Build bank spec (Eyeriss CONV assumptions) ---
-    bank = _infer_eyeriss_bank_spec(mapping)
+    # --- Classify spatial dims first (needed for N_out before building port spec) ---
+    spec = _classify_sa_dims(mapping)
+
+    # --- Extract device config (required) ---
+    bambu_cfg = config.get("bambu", {}) or {}
+    device_cfg = bambu_cfg.get("device", {}) or {}
+    if "physical_ports" not in device_cfg:
+        raise KeyError(
+            "[eyeriss_generator] config['bambu']['device']['physical_ports'] is required"
+        )
+    physical_ports = int(device_cfg["physical_ports"])
+
+    # --- Build port spec ---
+    bank = _infer_eyeriss_port_spec(mapping, spec.N_out, physical_ports)
+    folding_depth = math.ceil(spec.N_out / bank.output_ports)
 
     # --- Generate files ---
-    spec  = _classify_sa_dims(mapping)
     seq_c = _emit_top_level_seq(mapping, bank)
     sa_c  = _emit_top_level_sa(mapping, bank)
 
-    # Build gather bank C code for testbench (FF order, matches kernel write-back)
+    # Build gather C code for testbench (FF order, matches kernel write-back)
     lvars = spec.loop_vars()
     N_M_sp = math.prod(f for d, f, _ in spec.out_dims if d == 'M') or 1
     N_Q_sp = math.prod(f for d, f, _ in spec.out_dims if d == 'Q') or 1
@@ -317,12 +329,16 @@ def generate_experiment(mapping: MappingInfo, config: Dict[str, Any], out_dir: P
     out_bank_elems_tb = (M_d // N_M_sp) * Ptiles_tb * Qtiles_tb
     gather_bank_c = _gen_gather_bank_c(spec, lvars, N_M_sp, N_Q_sp, N_P_sp,
                                        Ptiles_tb, Qtiles_tb)
-    tb_c  = make_conv_testbench(mapping, bank, gather_bank_c=gather_bank_c,
-                                out_banks_n=spec.N_out,
-                                out_bank_elems_n=out_bank_elems_tb)
-    tb_sizes = conv_tb_param_sizes(mapping, bank, spec)
+    tb_c = make_conv_testbench(
+        mapping, bank, gather_bank_c=gather_bank_c,
+        out_banks_n=spec.N_out, out_bank_elems_n=out_bank_elems_tb,
+        output_ports=bank.output_ports, folding_depth=folding_depth,
+    )
+    tb_sizes = conv_tb_param_sizes(
+        mapping, bank, spec,
+        output_ports=bank.output_ports, folding_depth=folding_depth,
+    )
 
-    bambu_cfg = config.get("bambu", {}) or {}
     compile_sh = _emit_compile_bambu_sh(bambu_cfg, tb_sizes, n_pe=spec.N_PE)
     compare_sh = _emit_run_compare_sh(bambu_cfg, tb_sizes)
 
@@ -347,53 +363,76 @@ def generate_experiment(mapping: MappingInfo, config: Dict[str, Any], out_dir: P
 
 @dataclass(frozen=True)
 class ConvBankSpec:
-    """Input/weight banking only. Output banking derived from spec (SADimSpec.N_out)."""
-    in_banks: int
-    w_banks: int
+    """AXI port counts for input, weight, and output channels.
+    output_ports is clamped to physical_ports via min(N_out, physical_ports)."""
+    input_ports: int
+    weight_ports: int
+    physical_ports: int    # total physical AXI ports on FPGA (from config)
+    output_ports: int      # min(N_out, physical_ports)
 
 
-def _infer_eyeriss_bank_spec(mapping: MappingInfo) -> ConvBankSpec:
-    return ConvBankSpec(in_banks=2, w_banks=2)
+def _infer_eyeriss_port_spec(mapping: MappingInfo, n_out: int, physical_ports: int) -> ConvBankSpec:
+    """Derive AXI port counts from the FF mapping and device physical port limit."""
+    tiling = getattr(mapping, "tiling", {}) or {}
+    sarows = tiling.get("SARows", {}) or {}
+    sacols = tiling.get("SACols", {}) or {}
+    # input_ports = product of all C-dim factors in SA levels (C_spatial)
+    input_ports = 1
+    for lvl_tiling in (sarows, sacols):
+        for dim, fac in lvl_tiling.items():
+            if dim == 'C':
+                input_ports *= int(fac)
+    input_ports = max(1, input_ports)
+    weight_ports = input_ports
+    output_ports = min(n_out, physical_ports)
+    return ConvBankSpec(
+        input_ports=input_ports,
+        weight_ports=weight_ports,
+        physical_ports=physical_ports,
+        output_ports=output_ports,
+    )
 
 
-def _emit_headers_and_pragmas(N_out: int) -> str:
-    # Minimal macros + pragmas
+def _emit_headers_and_pragmas(input_ports: int, weight_ports: int, n_out: int, output_ports: int) -> str:
     lines = []
     lines.append("#define DTYPE float")
-    lines.append("#define M_TOTAL 4")
-    lines.append("#define P_TOTAL 4")
-    lines.append("#define Q_TOTAL 4")
-    lines.append("#define C_TOTAL 4")
-    lines.append("#define R_TOTAL 3")
-    lines.append("#define S_TOTAL 3")
     lines.append("")
-    lines.append("/* AXI pragmas for parallel memory buses */")
-    lines.append("#pragma HLS interface port = dram_in_b0 mode = m_axi offset = direct bundle = gmem_in0")
-    lines.append("#pragma HLS interface port = dram_in_b1 mode = m_axi offset = direct bundle = gmem_in1")
-    lines.append("#pragma HLS interface port = dram_w_b0  mode = m_axi offset = direct bundle = gmem_w0")
-    lines.append("#pragma HLS interface port = dram_w_b1  mode = m_axi offset = direct bundle = gmem_w1")
-    for i in range(N_out):
-        lines.append(f"#pragma HLS interface port = dram_out_b{i} mode = m_axi offset = direct bundle = gmem_out{i}")
+    lines.append("/* AXI pragmas: inputs and outputs share bundles (time-multiplexed) */")
+    for i in range(input_ports):
+        lines.append(f"#pragma HLS interface port = dram_input_p{i} mode = m_axi offset = direct bundle = gmem_{i}")
+    for i in range(weight_ports):
+        lines.append(f"#pragma HLS interface port = dram_weight_p{i} mode = m_axi offset = direct bundle = gmem_{input_ports + i}")
+    for i in range(output_ports):
+        lines.append(f"#pragma HLS interface port = dram_output_p{i} mode = m_axi offset = direct bundle = gmem_{i}")
     lines.append("")
     return "\n".join(lines)
 
 
-def _emit_top_signature(N_out: int) -> str:
-    args = [
-        "DTYPE *dram_in_b0", "DTYPE *dram_in_b1",
-        "DTYPE *dram_w_b0",  "DTYPE *dram_w_b1",
-    ]
-    for i in range(N_out):
-        args.append(f"DTYPE *dram_out_b{i}")
+def _emit_top_signature(input_ports: int, weight_ports: int, output_ports: int) -> str:
+    args = []
+    for i in range(input_ports):
+        args.append(f"DTYPE *dram_input_p{i}")
+    for i in range(weight_ports):
+        args.append(f"DTYPE *dram_weight_p{i}")
+    for i in range(output_ports):
+        args.append(f"DTYPE *dram_output_p{i}")
     return "void top_level(" + ", ".join(args) + ")"
 
 
-def _emit_out_store_switch_fixed(bank_index: int, out_banks: int, idx_expr: str, val_expr: str, indent: str) -> str:
-    # Used in SA version where out_bank is known (lane_m*2 + lane_q)
+def _emit_out_store_switch_fixed(output_port_expr: str, n_out: int, output_ports: int,
+                                  folding_depth: int, dram_offset_expr: str,
+                                  val_expr: str, indent: str) -> str:
     s = []
-    s.append(f"{indent}switch({bank_index}) {{")
-    for i in range(out_banks):
-        s.append(f"{indent}  case {i}: dram_out_b{i}[{idx_expr}] = {val_expr}; break;")
+    if folding_depth == 1:
+        s.append(f"{indent}switch({output_port_expr}) {{")
+        for i in range(n_out):
+            s.append(f"{indent}  case {i}: dram_output_p{i}[{dram_offset_expr}] = {val_expr}; break;")
+    else:
+        s.append(f"{indent}int output_port_index = {output_port_expr} % {output_ports};")
+        s.append(f"{indent}int safe_dram_offset = {dram_offset_expr} * {folding_depth} + {output_port_expr} / {output_ports};")
+        s.append(f"{indent}switch(output_port_index) {{")
+        for i in range(output_ports):
+            s.append(f"{indent}  case {i}: dram_output_p{i}[safe_dram_offset] = {val_expr}; break;")
     s.append(f"{indent}  default: break;")
     s.append(f"{indent}}}")
     return "\n".join(s)
@@ -460,7 +499,7 @@ def _composite_tile_expr(terms: list) -> Tuple:
 class _SACtx:
     """Pre-computed loop-structure facts, threaded through SA/SEQ kernel emitters."""
     M: int; P: int; Q: int; C: int; R: int; S: int; H: int; W: int
-    in_banks: int
+    input_ports: int
     spec: SADimSpec
     lvars: List[str]
     N_M_sp: int; N_Q_sp: int; N_P_sp: int
@@ -477,6 +516,9 @@ class _SACtx:
     inner_c_var: Any
     inner_c_factor: int
     C_sa: int; S_sa: int
+    output_ports: int
+    n_out: int
+    folding_depth: int
 
 
 def _build_sa_ctx(mapping: MappingInfo, bank: ConvBankSpec) -> _SACtx:
@@ -561,9 +603,13 @@ def _build_sa_ctx(mapping: MappingInfo, bank: ConvBankSpec) -> _SACtx:
     C_sa = int(sarows_til.get("C", 1))
     S_sa = int(sarows_til.get("S", 1))
 
+    n_out = spec.N_out
+    output_ports = bank.output_ports
+    folding_depth = math.ceil(n_out / output_ports)
+
     return _SACtx(
         M=M, P=P, Q=Q, C=C, R=R, S=S, H=H, W=W,
-        in_banks=bank.in_banks,
+        input_ports=bank.input_ports,
         spec=spec, lvars=lvars,
         N_M_sp=N_M_sp, N_Q_sp=N_Q_sp, N_P_sp=N_P_sp,
         Ptiles=Ptiles, Qtiles=Qtiles,
@@ -576,6 +622,9 @@ def _build_sa_ctx(mapping: MappingInfo, bank: ConvBankSpec) -> _SACtx:
         inner_loop_specs=inner_loop_specs,
         inner_r_var=inner_r_var, inner_c_var=inner_c_var, inner_c_factor=inner_c_factor,
         C_sa=C_sa, S_sa=S_sa,
+        output_ports=output_ports,
+        n_out=n_out,
+        folding_depth=folding_depth,
     )
 
 
@@ -618,6 +667,28 @@ def _emit_acc_init(ctx: _SACtx, unroll: bool, indent: str) -> List[str]:
     return lines
 
 
+def _emit_input_port_switch(port_var: str, input_ports: int, index_expr: str,
+                             result_var: str, rhs_template: str, indent: str) -> List[str]:
+    """Generate switch to select from dram_input_p{i}[index_expr] into result_var."""
+    lines = [f"{indent}switch({port_var}) {{"]
+    for i in range(input_ports):
+        lines.append(f"{indent}  case {i}: {result_var} = dram_input_p{i}[{index_expr}]; break;")
+    lines.append(f"{indent}  default: {result_var} = 0.0f; break;")
+    lines.append(f"{indent}}}")
+    return lines
+
+
+def _emit_weight_port_switch(port_var: str, weight_ports: int, index_expr: str,
+                              result_var: str, indent: str) -> List[str]:
+    """Generate switch to select from dram_weight_p{i}[index_expr] into result_var."""
+    lines = [f"{indent}switch({port_var}) {{"]
+    for i in range(weight_ports):
+        lines.append(f"{indent}  case {i}: {result_var} = dram_weight_p{i}[{index_expr}]; break;")
+    lines.append(f"{indent}  default: {result_var} = 0.0f; break;")
+    lines.append(f"{indent}}}")
+    return lines
+
+
 def _emit_sa_compute_body(ctx: _SACtx, r_var: str, indent: str) -> List[str]:
     """Phase 1 (weight preload) + Phase 2a (multiply) + Phase 2b (accumulate)."""
     spec = ctx.spec; lvars = ctx.lvars
@@ -655,6 +726,9 @@ def _emit_sa_compute_body(ctx: _SACtx, r_var: str, indent: str) -> List[str]:
     p_shape   = "".join(f"[{f}]" for _, f, _ in spec.all_dims)
     p_idx_str = "".join(f"[{v}]" for v in lvars)
 
+    input_ports  = ctx.input_ports
+    weight_ports = ctx.input_ports  # weight_ports == input_ports (same C_spatial)
+
     # ---- Phase 1: preload weights (non-Q SA dims only) ----
     lines += [
         f"{indent}// ---- Phase 1: preload weights — {n_w_elems} elems, no Q loop ----",
@@ -667,11 +741,12 @@ def _emit_sa_compute_body(ctx: _SACtx, r_var: str, indent: str) -> List[str]:
         pre += "  "
     lines += [
         f"{pre}int global_channel_index = {c_global_expr};",
-        f"{pre}int channel_bank = global_channel_index & 1;",
-        f"{pre}int channel_block_index = global_channel_index >> 1;",
-        f"{pre}int weight_dram_index = ({m_total_expr} * ((C + in_banks - 1) / in_banks) + channel_block_index) * (R * S) + {r_var} * S + {s_total_expr};",
-        f"{pre}weight_tile{w_idx_str} = (channel_bank==0) ? dram_w_b0[weight_dram_index] : dram_w_b1[weight_dram_index];",
+        f"{pre}int weight_port_index = global_channel_index % input_ports;",
+        f"{pre}int channel_block_index = global_channel_index / input_ports;",
+        f"{pre}int weight_dram_index = ({m_total_expr} * ((C + input_ports - 1) / input_ports) + channel_block_index) * (R * S) + {r_var} * S + {s_total_expr};",
     ]
+    lines += _emit_weight_port_switch("weight_port_index", weight_ports, "weight_dram_index",
+                                       f"weight_tile{w_idx_str}", pre)
     for v, _ in reversed(non_q_pairs):
         pre = pre[:-2]; lines.append(f"{pre}}}  // {v} (preload)")
     lines.append("")
@@ -690,16 +765,18 @@ def _emit_sa_compute_body(ctx: _SACtx, r_var: str, indent: str) -> List[str]:
     p_row = f"({ctx.outer_p_var} + {r_var})" if ctx.outer_p_var else r_var
     lines += [
         f"{p2a}int global_channel_index = {c_global_expr};",
-        f"{p2a}int channel_bank = global_channel_index & 1;",
-        f"{p2a}int channel_block_index = global_channel_index >> 1;",
+        f"{p2a}int input_port_index = global_channel_index % input_ports;",
+        f"{p2a}int channel_block_index = global_channel_index / input_ports;",
         f"{p2a}int input_channel_base_address = channel_block_index * (H * W);",
         f"{p2a}int input_row_base_address = input_channel_base_address + {p_row} * W;",
         f"{p2a}int input_column_offset = output_col_base + {q_flat} + {s_total_expr};",
         f"{p2a}DTYPE weight_value = weight_tile{w_idx_str};",
-        f"{p2a}DTYPE input_value = (channel_bank==0) ? dram_in_b0[input_row_base_address + input_column_offset]",
-        f"{p2a}                                      : dram_in_b1[input_row_base_address + input_column_offset];",
-        f"{p2a}product{p_idx_str} = weight_value * input_value;",
+        f"{p2a}DTYPE input_value;",
     ]
+    lines += _emit_input_port_switch("input_port_index", input_ports,
+                                      "input_row_base_address + input_column_offset",
+                                      "input_value", "", p2a)
+    lines.append(f"{p2a}product{p_idx_str} = weight_value * input_value;")
     for v, (dm, f, _) in reversed(list(zip(lvars, spec.all_dims))):
         p2a = p2a[:-2]; lines.append(f"{p2a}}}  // {v} ({dm}:{f})")
     lines.append("")
@@ -723,6 +800,9 @@ def _emit_seq_compute_body(ctx: _SACtx, r_var: str, indent: str) -> List[str]:
     spec = ctx.spec; lvars = ctx.lvars
     lines = []
 
+    input_ports  = ctx.input_ports
+    weight_ports = ctx.input_ports  # weight_ports == input_ports
+
     out_loop_vars_f = [(v, f) for v, (dm, f, _) in zip(lvars, spec.all_dims) if dm in {'M', 'P', 'Q'}]
     bank_expr  = _mixed_radix(out_loop_vars_f)
     m_sa_pairs = [(v, f) for v, (dm, f, _) in zip(lvars, spec.all_dims) if dm == 'M']
@@ -735,17 +815,18 @@ def _emit_seq_compute_body(ctx: _SACtx, r_var: str, indent: str) -> List[str]:
     s_seq_expr = f"({ctx.outer_s_var} * {ctx.S_sa} + s)" if ctx.outer_s_var else "s"
 
     def _c_setup(ind):
-        """Emit channel_bank/channel_block_index/input_channel_base_address/output_col_base lines inside the c loop."""
+        """Emit channel port/block index and col_base lines inside the c loop."""
         if ctx.outer_c_var or ctx.inner_c_var:
             parts = []
             if ctx.outer_c_var: parts.append(f"{ctx.outer_c_var} * {ctx.inner_c_factor * ctx.C_sa}")
             if ctx.inner_c_var: parts.append(f"{ctx.inner_c_var} * {ctx.C_sa}")
             parts.append("c")
             lines.extend([f"{ind}  int global_channel_index = {' + '.join(parts)};",
-                           f"{ind}  int channel_bank = global_channel_index & 1;",
-                           f"{ind}  int channel_block_index = global_channel_index >> 1;"])
+                           f"{ind}  int channel_port_index = global_channel_index % input_ports;",
+                           f"{ind}  int channel_block_index = global_channel_index / input_ports;"])
         else:
-            lines.extend([f"{ind}  int channel_bank = c & 1;", f"{ind}  int channel_block_index = c >> 1;"])
+            lines.extend([f"{ind}  int channel_port_index = c % input_ports;",
+                          f"{ind}  int channel_block_index = c / input_ports;"])
         lines.append(f"{ind}  int input_channel_base_address = channel_block_index * (H * W);")
         q_rhs = f"{ctx.outer_q_var} * {ctx.N_Q_sp}" if ctx.outer_q_var else "0"
         lines.append(f"{ind}  int output_col_base = {q_rhs};")
@@ -770,14 +851,20 @@ def _emit_seq_compute_body(ctx: _SACtx, r_var: str, indent: str) -> List[str]:
                   f"{seq}for (int {var} = 0; {var} < {fac}; ++{var}) {{  // {dim}:{fac}"]
         seq += "  "
     lines += [
-        f"{seq}int weight_dram_index = (({m_total}) * ((C + in_banks - 1) / in_banks) + channel_block_index) * (R * S) + {r_var} * S + {s_seq_expr};",
-        f"{seq}DTYPE weight_value = (channel_bank==0) ? dram_w_b0[weight_dram_index] : dram_w_b1[weight_dram_index];",
+        f"{seq}int weight_dram_index = (({m_total}) * ((C + input_ports - 1) / input_ports) + channel_block_index) * (R * S) + {r_var} * S + {s_seq_expr};",
+        f"{seq}DTYPE weight_value;",
+    ]
+    lines += _emit_weight_port_switch("channel_port_index", weight_ports, "weight_dram_index",
+                                       "weight_value", seq)
+    lines += [
         f"{seq}int input_row_base_address = input_channel_base_address + {p_row} * W;",
         f"{seq}int input_column_offset = output_col_base + {q_flat} + {s_seq_expr};",
-        f"{seq}DTYPE input_value = (channel_bank==0) ? dram_in_b0[input_row_base_address + input_column_offset]",
-        f"{seq}                                      : dram_in_b1[input_row_base_address + input_column_offset];",
-        f"{seq}accumulator[{bank_expr}] += weight_value * input_value;",
+        f"{seq}DTYPE input_value;",
     ]
+    lines += _emit_input_port_switch("channel_port_index", input_ports,
+                                      "input_row_base_address + input_column_offset",
+                                      "input_value", "", seq)
+    lines.append(f"{seq}accumulator[{bank_expr}] += weight_value * input_value;")
     for (var, fac), (dim, _, _) in reversed(list(zip(out_loop_vars_f, spec.out_dims))):
         seq = seq[:-2]; lines.append(f"{seq}}}  // {var} ({dim}:{fac})")
     lines += [f"{indent}  }}  // s", f"{indent}}}  // c", ""]
@@ -820,7 +907,7 @@ def _emit_reduction_tree_block(ctx: _SACtx, indent: str) -> List[str]:
 
 
 def _emit_writeback_block(ctx: _SACtx, unroll: bool, indent: str) -> List[str]:
-    """Write reduced/accumulated values to banked output DRAM ports."""
+    """Write reduced/accumulated values to output DRAM ports."""
     spec = ctx.spec; lvars = ctx.lvars
     out_loop_vars_f = [(v, f) for v, (dm, f, _) in zip(lvars, spec.all_dims) if dm in {'M', 'P', 'Q'}]
     bank_expr = _mixed_radix(out_loop_vars_f)
@@ -830,7 +917,7 @@ def _emit_writeback_block(ctx: _SACtx, unroll: bool, indent: str) -> List[str]:
     pragma    = "unroll" if unroll else "nounroll"
     val_expr  = f"reduced_output{''.join(f'[{v}]' for v, _ in out_loop_vars_f)}" if unroll else f"accumulator[{bank_expr}]"
 
-    lines = [f"{indent}// OutRegister: write accumulator to banked output ports"]
+    lines = [f"{indent}// OutRegister: write accumulator to output DRAM ports"]
     wb = indent
     for (var, fac), (dim, _, _) in zip(out_loop_vars_f, spec.out_dims):
         lines += [f"{wb}#pragma GCC {pragma} {fac}", f"{wb}for (int {var} = 0; {var} < {fac}; ++{var}) {{"]
@@ -842,7 +929,10 @@ def _emit_writeback_block(ctx: _SACtx, unroll: bool, indent: str) -> List[str]:
         f"{wb}int output_col_tile = {cq_expr};",
         f"{wb}int output_dram_offset = (output_filter_tile * Ptiles + output_row_tile) * Qtiles + output_col_tile;",
         f"{wb}DTYPE output_value = {val_expr};",
-        _emit_out_store_switch_fixed("output_bank", spec.N_out, "output_dram_offset", "output_value", wb),
+        _emit_out_store_switch_fixed(
+            "output_bank", ctx.n_out, ctx.output_ports, ctx.folding_depth,
+            "output_dram_offset", "output_value", wb
+        ),
     ]
     for _ in out_loop_vars_f:
         wb = wb[:-2]; lines.append(f"{wb}}}")
@@ -859,13 +949,17 @@ def _emit_top_level_sa(mapping: MappingInfo, bank: ConvBankSpec, unroll: bool = 
     ctx  = _build_sa_ctx(mapping, bank)
     kind = "SA (weight-preload)" if unroll else "seq (all-nounroll)"
 
-    code = [_emit_headers_and_pragmas(ctx.spec.N_out), _emit_top_signature(ctx.spec.N_out), "{"]
+    code = [
+        _emit_headers_and_pragmas(ctx.input_ports, ctx.input_ports, ctx.n_out, ctx.output_ports),
+        _emit_top_signature(ctx.input_ports, ctx.input_ports, ctx.output_ports),
+        "{",
+    ]
     code += [
         f"    // {kind} Eyeriss CONV — loop structure mirrors FF mapping hierarchy",
         f"    const int M={ctx.M}, P={ctx.P}, Q={ctx.Q}, C={ctx.C}, R={ctx.R}, S={ctx.S};",
         f"    const int H={ctx.H}, W={ctx.W};",
         f"    const int Ptiles={ctx.Ptiles}, Qtiles={ctx.Qtiles};",
-        f"    const int in_banks={ctx.in_banks};",
+        f"    const int input_ports={ctx.input_ports};",
         "",
     ]
     code.extend(_emit_acc_decl(ctx, unroll))
@@ -954,6 +1048,7 @@ def _emit_compile_bambu_sh(bambu_cfg: Dict[str, Any], tb_sizes: Dict[str, int], 
     opt = bambu_cfg.get("opt_level", 3)
     v = bambu_cfg.get("v", 4)
     extra_args = bambu_cfg.get("extra_args", []) or []
+    device_name = (bambu_cfg.get("device") or {}).get("name", None)
 
     float_mul_default, other_args = _extract_float_mul(extra_args)
     n_pe_str = str(n_pe) if n_pe else ""
@@ -965,6 +1060,8 @@ def _emit_compile_bambu_sh(bambu_cfg: Dict[str, Any], tb_sizes: Dict[str, int], 
     other_flags = ""
     for a in other_args:
         other_flags += f"  {a} \\\n"
+
+    device_flag = f"  --device-name={device_name} \\\n" if device_name else ""
 
     return f"""#!/bin/bash
 set -euo pipefail
@@ -990,7 +1087,7 @@ bambu "$TOP" \\
   --generate-interface=INFER \\
   --compiler={compiler} \\
   --clock-period={clock} \\
-  -O{opt} -v{v} \\
+{device_flag}  -O{opt} -v{v} \\
   --generate-tb="$TB" \\
 {tb_flags}{other_flags}${{FLOAT_MUL_FLAG:+$FLOAT_MUL_FLAG}} \\
   ${{FLOAT_ADD_FLAG:+$FLOAT_ADD_FLAG}} \\
@@ -1014,6 +1111,7 @@ def _emit_run_compare_sh(bambu_cfg: Dict[str, Any], tb_sizes: Dict[str, int]) ->
     opt      = bambu_cfg.get("opt_level", 3)
     v        = bambu_cfg.get("v", 4)
     extra_args = bambu_cfg.get("extra_args", []) or []
+    device_name = (bambu_cfg.get("device") or {}).get("name", None)
 
     float_mul_default, other_args = _extract_float_mul(extra_args)
 
@@ -1024,6 +1122,8 @@ def _emit_run_compare_sh(bambu_cfg: Dict[str, Any], tb_sizes: Dict[str, int]) ->
     other_flags = ""
     for a in other_args:
         other_flags += f'      {a} \\\n'
+
+    device_flag = f'      --device-name={device_name} \\\n' if device_name else ""
 
     return f"""#!/bin/bash
 set -euo pipefail
@@ -1077,7 +1177,7 @@ run_bambu () {{
       --generate-interface=INFER \\
       --compiler={compiler} \\
       --clock-period={clock} \\
-      -O{opt} -v{v} \\
+{device_flag}      -O{opt} -v{v} \\
       --generate-tb="../../../${{TB}}" \\
 {tb_flags}{other_flags}${{float_mul_flag:+${{float_mul_flag}}}} \\
       --simulate
@@ -1123,7 +1223,7 @@ def _write(path: Path, content: str, make_executable: bool = False) -> None:
     if make_executable:
         mode = path.stat().st_mode
         path.chmod(mode | 0o111)
-        
+
 
 def _write_text(path: Path, content: str) -> None:
     _write(path, content, make_executable=False)

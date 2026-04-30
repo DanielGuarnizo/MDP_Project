@@ -1,6 +1,7 @@
 from __future__ import annotations
-from typing import Union
-from mapping_types import MappingInfo, ConvBankSpec
+from typing import Any
+from mapping_types import MappingInfo
+
 
 def conv_common_defs(mapping) -> str:
     d = mapping.dims
@@ -14,14 +15,21 @@ def conv_common_defs(mapping) -> str:
         f"#define S_TOTAL {int(d.get('S', 1))}\n\n"
     )
 
-def conv_tb_param_sizes(mapping: MappingInfo, bank: ConvBankSpec, spec=None) -> dict:
-    in_banks  = bank.in_banks
+
+def _get_input_ports(bank: Any) -> int:
+    """Read input port count from either new ConvBankSpec (input_ports) or legacy (in_banks)."""
+    return getattr(bank, 'input_ports', getattr(bank, 'in_banks', 2))
+
+
+def conv_tb_param_sizes(mapping: MappingInfo, bank: Any, spec=None,
+                        output_ports: int = None, folding_depth: int = 1) -> dict:
+    input_ports = _get_input_ports(bank)
     d = mapping.dims
     M, P, Q, C, R, S = d["M"], d["P"], d["Q"], d["C"], d["R"], d["S"]
     H, W = P + R - 1, Q + S - 1
-    c_blks = (C + in_banks - 1) // in_banks
-    in_bank_elems = c_blks * H * W
-    w_bank_elems  = M * c_blks * R * S
+    c_blks = (C + input_ports - 1) // input_ports
+    in_port_elems = c_blks * H * W
+    w_port_elems  = M * c_blks * R * S
 
     if spec is not None:
         N_M_sp = 1
@@ -33,38 +41,43 @@ def conv_tb_param_sizes(mapping: MappingInfo, bank: ConvBankSpec, spec=None) -> 
         N_P_sp = 1
         for dim, f, _ in spec.out_dims:
             if dim == 'P': N_P_sp *= f
-        out_banks      = spec.N_out
+        n_out          = spec.N_out
         out_bank_elems = (M // N_M_sp) * (P // N_P_sp) * (Q // N_Q_sp)
     else:
-        out_banks      = bank.out_banks
+        n_out          = getattr(bank, 'out_banks', 1)
         m_sf, p_sf, q_sf = bank.m_sf, bank.p_sf, bank.q_sf
         Ptiles = bank.p_tiles
         Qtiles = bank.q_tiles
         out_bank_elems = ((M + m_sf - 1) // m_sf) * Ptiles * Qtiles
 
-    sizes = {
-        "dram_in_b0": in_bank_elems * 4,
-        "dram_in_b1": in_bank_elems * 4,
-        "dram_w_b0":  w_bank_elems * 4,
-        "dram_w_b1":  w_bank_elems * 4,
-    }
-    for i in range(out_banks):
-        sizes[f"dram_out_b{i}"] = out_bank_elems * 4
+    effective_output_ports = output_ports if output_ports is not None else n_out
+
+    sizes = {}
+    for i in range(input_ports):
+        sizes[f"dram_input_p{i}"] = in_port_elems * 4
+    weight_ports = getattr(bank, 'weight_ports', input_ports)
+    for i in range(weight_ports):
+        sizes[f"dram_weight_p{i}"] = w_port_elems * 4
+    for i in range(effective_output_ports):
+        sizes[f"dram_output_p{i}"] = out_bank_elems * folding_depth * 4
     return sizes
 
 
-def make_conv_testbench(mapping: MappingInfo, bank: ConvBankSpec,
+def make_conv_testbench(mapping: MappingInfo, bank: Any,
                         gather_bank_c: str = None,
                         out_banks_n: int = None,
-                        out_bank_elems_n: int = None) -> str:
-    in_banks  = bank.in_banks
+                        out_bank_elems_n: int = None,
+                        output_ports: int = None,
+                        folding_depth: int = 1) -> str:
+    input_ports  = _get_input_ports(bank)
+    weight_ports = getattr(bank, 'weight_ports', input_ports)
     d = mapping.dims
     M, P, Q, C, R, S = d["M"], d["P"], d["Q"], d["C"], d["R"], d["S"]
     H, W = P + R - 1, Q + S - 1
 
-    c_blks = (C + in_banks - 1) // in_banks
-    in_bank_elems = c_blks * H * W
-    w_bank_elems  = M * c_blks * R * S
+    c_blks        = (C + input_ports - 1) // input_ports
+    in_port_elems = c_blks * H * W
+    w_port_elems  = M * c_blks * R * S
 
     if out_banks_n is not None:
         out_banks      = out_banks_n
@@ -78,6 +91,10 @@ def make_conv_testbench(mapping: MappingInfo, bank: ConvBankSpec,
         Qtiles = (Q + q_sf - 1) // q_sf
         out_banks      = bank.out_banks
         out_bank_elems = ((M + m_sf - 1) // m_sf) * Ptiles * Qtiles
+
+    effective_output_ports = output_ports if output_ports is not None else out_banks
+    # Each physical output port holds folding_depth worth of data
+    out_port_elems = out_bank_elems * folding_depth
 
     in_full_e  = C * H * W
     w_full_e   = M * C * R * S
@@ -96,38 +113,60 @@ def make_conv_testbench(mapping: MappingInfo, bank: ConvBankSpec,
 #endif
 ''' + "\n"
 
-
     # top_level prototype
-    args = ["DTYPE *dram_in_b0","DTYPE *dram_in_b1","DTYPE *dram_w_b0","DTYPE *dram_w_b1"]
-    for i in range(out_banks):
-        args.append(f"DTYPE *dram_out_b{i}")
-    proto = "void top_level(" + ", ".join(args) + ");\n\n"
+    proto_args = []
+    for i in range(input_ports):
+        proto_args.append(f"DTYPE *dram_input_p{i}")
+    for i in range(weight_ports):
+        proto_args.append(f"DTYPE *dram_weight_p{i}")
+    for i in range(effective_output_ports):
+        proto_args.append(f"DTYPE *dram_output_p{i}")
+    proto = "void top_level(" + ", ".join(proto_args) + ");\n\n"
 
-    # output gather switch
-    gather_switch = ""
-    for i in range(out_banks):
-        gather_switch += f"            case {i}: out_full[out_idx] = dram_out_b{i}[output_dram_offset]; break;\n"
+    # output gather switch (folding-aware)
+    if folding_depth == 1:
+        gather_switch_pre = ""
+        gather_switch_var = "output_bank_index"
+        gather_offset_var = "output_dram_offset"
+        gather_switch = ""
+        for i in range(out_banks):
+            gather_switch += f"            case {i}: out_full[out_idx] = dram_output_p{i}[{gather_offset_var}]; break;\n"
+    else:
+        gather_switch_pre = (
+            f"          int output_port_index = output_bank_index % {effective_output_ports};\n"
+            f"          int safe_dram_offset = output_dram_offset * {folding_depth} + output_bank_index / {effective_output_ports};"
+        )
+        gather_switch_var = "output_port_index"
+        gather_offset_var = "safe_dram_offset"
+        gather_switch = ""
+        for i in range(effective_output_ports):
+            gather_switch += f"            case {i}: out_full[out_idx] = dram_output_p{i}[{gather_offset_var}]; break;\n"
     if not gather_switch:
         gather_switch = "            default: out_full[out_idx] = 0.0f; break;\n"
 
-    # alloc out banks
+    # alloc output ports
     out_alloc = ""
-    out_free = ""
-    call_args = "dram_in_b0, dram_in_b1, dram_w_b0, dram_w_b1"
-    for i in range(out_banks):
-        out_alloc += f"    DTYPE *dram_out_b{i} = (DTYPE*)malloc({out_bank_elems} * sizeof(DTYPE));\n"
-        out_alloc += f"    if (!dram_out_b{i}) {{ printf(\"Out bank {i} alloc failed!\\n\"); return -1; }}\n"
-        out_free += f"    free(dram_out_b{i});\n"
-        call_args += f", dram_out_b{i}"
+    out_free  = ""
+    call_args = ", ".join([f"dram_input_p{i}" for i in range(input_ports)] +
+                          [f"dram_weight_p{i}" for i in range(weight_ports)])
+    for i in range(effective_output_ports):
+        out_alloc += f"    DTYPE *dram_output_p{i} = (DTYPE*)malloc({out_port_elems} * sizeof(DTYPE));\n"
+        out_alloc += f"    if (!dram_output_p{i}) {{ printf(\"Output port {i} alloc failed!\\n\"); return -1; }}\n"
+        out_free  += f"    free(dram_output_p{i});\n"
+        call_args += f", dram_output_p{i}"
 
     # mdpi allocs
     mdpi_alloc = ""
-    mdpi_alloc += f"    m_param_alloc(0, {in_bank_elems} * sizeof(DTYPE));\n"
-    mdpi_alloc += f"    m_param_alloc(1, {in_bank_elems} * sizeof(DTYPE));\n"
-    mdpi_alloc += f"    m_param_alloc(2, {w_bank_elems} * sizeof(DTYPE));\n"
-    mdpi_alloc += f"    m_param_alloc(3, {w_bank_elems} * sizeof(DTYPE));\n"
-    for i in range(out_banks):
-        mdpi_alloc += f"    m_param_alloc({4+i}, {out_bank_elems} * sizeof(DTYPE));\n"
+    param_idx = 0
+    for i in range(input_ports):
+        mdpi_alloc += f"    m_param_alloc({param_idx}, {in_port_elems} * sizeof(DTYPE));\n"
+        param_idx += 1
+    for i in range(weight_ports):
+        mdpi_alloc += f"    m_param_alloc({param_idx}, {w_port_elems} * sizeof(DTYPE));\n"
+        param_idx += 1
+    for i in range(effective_output_ports):
+        mdpi_alloc += f"    m_param_alloc({param_idx}, {out_port_elems} * sizeof(DTYPE));\n"
+        param_idx += 1
 
     # Build gather block: use FF-order decomposition if provided, else legacy
     if gather_bank_c is not None:
@@ -145,6 +184,54 @@ def make_conv_testbench(mapping: MappingInfo, bank: ConvBankSpec,
             f"          int output_col_tile = ({q_sf}==1)?q:(q / {q_sf});\n"
             f"          int output_dram_offset = (output_filter_tile*{Ptiles} + output_row_tile)*{Qtiles} + output_col_tile;"
         )
+
+    # input alloc lines
+    input_alloc = ""
+    input_alloc_check = ""
+    input_free = ""
+    input_zero = ""
+    for i in range(input_ports):
+        input_alloc += f"    DTYPE *dram_input_p{i}  = (DTYPE*)malloc({in_port_elems} * sizeof(DTYPE));\n"
+        input_alloc_check += f"dram_input_p{i}"
+        if i < input_ports - 1:
+            input_alloc_check += " || "
+        input_free += f"    free(dram_input_p{i});\n"
+    input_alloc_check = "    if (" + input_alloc_check + ") {}\n"  # not used directly
+
+    weight_alloc = ""
+    weight_free = ""
+    for i in range(weight_ports):
+        weight_alloc += f"    DTYPE *dram_weight_p{i} = (DTYPE*)malloc({w_port_elems} * sizeof(DTYPE));\n"
+        weight_free  += f"    free(dram_weight_p{i});\n"
+
+    # input/weight zero init
+    input_zero_lines = ""
+    for i in range(input_ports):
+        input_zero_lines += f"    for (size_t i = 0; i < {in_port_elems}; ++i) dram_input_p{i}[i] = 0.0f;\n"
+    weight_zero_lines = ""
+    for i in range(weight_ports):
+        weight_zero_lines += f"    for (size_t i = 0; i < {w_port_elems}; ++i) dram_weight_p{i}[i] = 0.0f;\n"
+
+    # output zero init
+    output_zero_lines = ""
+    for i in range(effective_output_ports):
+        output_zero_lines += f"    for (size_t i = 0; i < {out_port_elems}; ++i) dram_output_p{i}[i] = 0.0f;\n"
+
+    # scatter input: distribute channel c to port c%input_ports, block c/input_ports
+    input_scatter_cases = ""
+    for i in range(input_ports):
+        input_scatter_cases += f"                if (port_index == {i}) dram_input_p{i}[b_idx] = in_full[full_idx];\n"
+
+    weight_scatter_cases = ""
+    for i in range(weight_ports):
+        weight_scatter_cases += f"                if (port_index == {i}) dram_weight_p{i}[b_idx] = w_full[full_idx];\n"
+
+    allnull_input  = " || ".join([f"!dram_input_p{i}"  for i in range(input_ports)])
+    allnull_weight = " || ".join([f"!dram_weight_p{i}" for i in range(weight_ports)])
+    free_input_weight = input_free + weight_free
+
+    # optional gather_switch_pre line
+    gather_pre_line = (f"\n          {gather_switch_pre}" if gather_switch_pre else "")
 
     code += f"""
 #include <stdlib.h>
@@ -215,53 +302,47 @@ int main() {{
     init(in_full, w_full, out_full, gold, in_full_e, w_full_e, out_full_e);
     golden_reference(in_full, w_full, gold);
 
-    // Banked inputs/weights
-    DTYPE *dram_in_b0 = (DTYPE*)malloc({in_bank_elems} * sizeof(DTYPE));
-    DTYPE *dram_in_b1 = (DTYPE*)malloc({in_bank_elems} * sizeof(DTYPE));
-    DTYPE *dram_w_b0  = (DTYPE*)malloc({w_bank_elems} * sizeof(DTYPE));
-    DTYPE *dram_w_b1  = (DTYPE*)malloc({w_bank_elems} * sizeof(DTYPE));
-    if (!dram_in_b0 || !dram_in_b1 || !dram_w_b0 || !dram_w_b1) {{
-        printf("Bank allocation failed!\\n");
+    // Input ports
+{input_alloc}
+    if ({allnull_input}) {{
+        printf("Input port allocation failed!\\n");
         return -1;
     }}
 
-    // Outputs
+    // Weight ports
+{weight_alloc}
+    if ({allnull_weight}) {{
+        printf("Weight port allocation failed!\\n");
+        return -1;
+    }}
+
+    // Output ports
 {out_alloc}
 
-    // Zero
-    for (size_t i = 0; i < {in_bank_elems}; ++i) {{ dram_in_b0[i]=0.0f; dram_in_b1[i]=0.0f; }}
-    for (size_t i = 0; i < {w_bank_elems};  ++i) {{ dram_w_b0[i]=0.0f; dram_w_b1[i]=0.0f; }}
-"""
-    for i in range(out_banks):
-        code += f"    for (size_t i = 0; i < {out_bank_elems}; ++i) dram_out_b{i}[i] = 0.0f;\n"
-
-    code += f"""
-    // Scatter input into 2 banks by c%2
+    // Zero all ports
+{input_zero_lines}{weight_zero_lines}{output_zero_lines}
+    // Scatter input into {input_ports} ports by c % {input_ports}
     for (int c = 0; c < {C}; ++c) {{
-        int bank = c & 1;
-        int blk  = c >> 1;
+        int port_index = c % {input_ports};
+        int blk        = c / {input_ports};
         for (int y = 0; y < {H}; ++y) {{
             for (int x = 0; x < {W}; ++x) {{
                 int full_idx = c*{H}*{W} + y*{W} + x;
                 int b_idx    = blk*{H}*{W} + y*{W} + x;
-                if (bank==0) dram_in_b0[b_idx] = in_full[full_idx];
-                else         dram_in_b1[b_idx] = in_full[full_idx];
-            }}
+{input_scatter_cases}            }}
         }}
     }}
 
-    // Scatter weights into 2 banks by c%2
+    // Scatter weights into {weight_ports} ports by c % {weight_ports}
     for (int m = 0; m < {M}; ++m) {{
       for (int c = 0; c < {C}; ++c) {{
-        int bank = c & 1;
-        int blk  = c >> 1;
+        int port_index = c % {weight_ports};
+        int blk        = c / {weight_ports};
         for (int r = 0; r < {R}; ++r)
           for (int s = 0; s < {S}; ++s) {{
             int full_idx = m*{C}*{R}*{S} + c*{R}*{S} + r*{S} + s;
             int b_idx    = (m*{c_blks} + blk)*{R}*{S} + r*{S} + s;
-            if (bank==0) dram_w_b0[b_idx] = w_full[full_idx];
-            else         dram_w_b1[b_idx] = w_full[full_idx];
-          }}
+{weight_scatter_cases}          }}
       }}
     }}
 
@@ -272,15 +353,15 @@ int main() {{
     printf("Running HLS top_level function...\\n");
     top_level({call_args});
 
-    // Gather out banks into out_full
+    // Gather output ports into out_full
     for (int m = 0; m < {M}; ++m)
       for (int p = 0; p < {P}; ++p)
         for (int q = 0; q < {Q}; ++q) {{
 
-          {gather_block}
+          {gather_block}{gather_pre_line}
 
           int out_idx = m*{P}*{Q} + p*{Q} + q;
-          switch(output_bank_index) {{
+          switch({gather_switch_var}) {{
 {gather_switch}            default: out_full[out_idx] = 0.0f; break;
           }}
         }}
@@ -291,8 +372,7 @@ int main() {{
     else printf("FAILURE: Found %d mismatches.\\n", e);
 
     free(in_full); free(w_full); free(out_full); free(gold);
-    free(dram_in_b0); free(dram_in_b1); free(dram_w_b0); free(dram_w_b1);
-{out_free}
+{free_input_weight}{out_free}
     return e;
 }}
 """
