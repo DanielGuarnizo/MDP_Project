@@ -16,13 +16,13 @@ CONV_DIR="$REPO_ROOT/tests/eyeriss/conv/generated"
 
 # N_mul sweep per experiment (powers of 2 from 1 to U, plus U if not power of 2)
 declare -A SWEEP
-SWEEP[ex11]="1 2 4 8 16 32 64 128 168"   # U=96
-SWEEP[ex12]="1 2 4 8 16 32 64 128 168"
+SWEEP[ex1]="1 2 4 8 16 32 64 96"   # U=96
+
 
 # If experiments passed as args, use those; else run all
 # EXPERIMENTS=("${@:-ex1 ex2 ex3 ex4 ex5 ex6}")
 # EXPERIMENTS=("${@:-ex1 ex2 ex3 ex4 ex5 ex6 ex8 ex9 ex10}")
-EXPERIMENTS=("${@:-ex11 ex12}")
+EXPERIMENTS=("${@:-ex1}")
 if [[ ${#EXPERIMENTS[@]} -eq 1 && "${EXPERIMENTS[0]}" == *" "* ]]; then
   read -ra EXPERIMENTS <<< "${EXPERIMENTS[0]}"
 fi
@@ -49,7 +49,7 @@ for EX in "${EXPERIMENTS[@]}"; do
   echo "════════════════════════════════════════════════════════"
 
   for N_MUL in ${SWEEP[$EX]}; do
-    LOG="$EXP_DIR/Bambu_outputs/sa/n${N_MUL}/bambu_sa_n${N_MUL}.log"
+    LOG="$EXP_DIR/Bambu_outputs/seq/n${N_MUL}/bambu_seq_n${N_MUL}.log"
 
     # Resume: skip if already done
     if [[ -f "$LOG" ]] && grep -q "Run 1 execution time" "$LOG"; then
@@ -62,10 +62,10 @@ for EX in "${EXPERIMENTS[@]}"; do
     t_start=$SECONDS
 
     # SA-only: set up outdir, run compile_bambu.sh from inside it
-    outdir="${EXP_DIR}/Bambu_outputs/sa/n${N_MUL}"
+    outdir="${EXP_DIR}/Bambu_outputs/seq/n${N_MUL}"
     rm -rf "${outdir}"
     mkdir -p "${outdir}"
-    (cd "${outdir}" && bash "${EXP_DIR}/compile_bambu.sh" "${EXP_DIR}/top_level_sa.c" "$N_MUL" "$N_MUL") \
+    (cd "${outdir}" && bash "${EXP_DIR}/compile_bambu.sh" "${EXP_DIR}/top_level_seq.c" "$N_MUL" "$N_MUL") \
       > "${LOG}" 2>&1
     rc=$?
     elapsed=$(( SECONDS - t_start ))
@@ -84,7 +84,7 @@ done
 # ── Summary ──
 echo ""
 echo "════════════════════════════════════════════════════════"
-echo "  SUMMARY — SA cycles"
+echo "  SUMMARY — SEQ cycles"
 echo "════════════════════════════════════════════════════════"
 printf "%-6s" "N_mul"
 for EX in "${EXPERIMENTS[@]}"; do printf "  %-12s" "$EX"; done

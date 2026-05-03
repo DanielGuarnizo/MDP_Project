@@ -6,10 +6,10 @@ if [ ! -z "$APPDIR" ]; then
   export PERLLIB=$(sed -E 's/\/tmp\/.mount[^\:]+\://g' <<< $PERLLIB)
 fi
 (cd panda-temp/archives
- ar x /opt/panda/lib/panda/libbambu_gcc8.a || touch error &
- ar x /opt/panda/lib/panda/libhls-cdiv_gcc8.a || touch error &
- ar x /opt/panda/lib/panda/libhls-divNR_gcc8.a || touch error &
- ar x /opt/panda/lib/panda/libsoftfloat_gcc8.a || touch error &
+ ar x /usr/local/lib/panda/libbambu_gcc8.a || touch error &
+ ar x /usr/local/lib/panda/libhls-cdiv_gcc8.a || touch error &
+ ar x /usr/local/lib/panda/libhls-divNR_gcc8.a || touch error &
+ ar x /usr/local/lib/panda/libsoftfloat_gcc8.a || touch error &
  wait
  if [ -e "error" ]; then exit -1; fi)  2>&1 | tee "panda-temp/shell_output_0"
 exit ${PIPESTATUS[0]}

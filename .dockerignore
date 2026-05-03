@@ -1,0 +1,13 @@
+FactorFlow/
+PandA-bambu/
+venv/
+.git/
+.claude/
+experiments/
+tests/
+src/
+scripts/
+docs/
+papers/
+**/__pycache__/
+**/*.pyc
