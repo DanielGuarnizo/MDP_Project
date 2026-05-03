@@ -2,6 +2,14 @@
 
 End-to-end HLS pipeline: FactorFlow produces dataflow mappings, the MDP code-generator emits C kernels, and Bambu compiles them to RTL for cycle-accurate simulation.
 
+## Clone
+
+```bash
+git clone --recurse-submodules <repo-url>
+```
+
+`FactorFlow` and `PandA-bambu` are git submodules — without `--recurse-submodules` those directories will be empty.
+
 ## Setup (two commands)
 
 

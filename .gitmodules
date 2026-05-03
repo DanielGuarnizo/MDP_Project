@@ -1,0 +1,9 @@
+[submodule "FactorFlow"]
+	path = FactorFlow
+	url = https://github.com/EMJzero/FactorFlow.git
+	branch = master
+
+[submodule "PandA-bambu"]
+	path = PandA-bambu
+	url = https://github.com/ferrandi/PandA-bambu.git
+	branch = dev/panda
