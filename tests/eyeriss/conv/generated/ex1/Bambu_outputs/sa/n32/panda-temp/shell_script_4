@@ -1,9 +1,0 @@
-#!/bin/bash
-ulimit -s 131072
-if [ ! -z "$APPDIR" ]; then
-  export PATH=$(sed -E 's/\/tmp\/.mount[^\:]+\://g' <<< $PATH)
-  export LD_LIBRARY_PATH=$(sed -E 's/\/tmp\/.mount[^\:]+\://g' <<< $LD_LIBRARY_PATH)
-  export PERLLIB=$(sed -E 's/\/tmp\/.mount[^\:]+\://g' <<< $PERLLIB)
-fi
-(if test -f ./simulate_top_level.sh ; then true; else if test `which ./simulate_top_level.sh`; then true; else false; fi fi>& __stdouterr)  2>&1 | tee "panda-temp/check_command_output"
-exit ${PIPESTATUS[0]}

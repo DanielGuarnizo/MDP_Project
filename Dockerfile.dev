@@ -1,12 +1,16 @@
-# Use x86_64 Ubuntu 20.04 on Apple Silicon
+# Dockerfile.dev
+# Extended image that builds and installs PandA-bambu (bambu HLS tool).
+# Produces dev_mdp_image; leaves mdp_image / mdp_container untouched.
+#
+# Build time: ~30-60 min (compiles PandA from source).
+# See README.md for full setup instructions.
+
 FROM ubuntu:20.04
 
-# Avoid prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
-# Install basic tools and add repositories
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     wget \
@@ -20,15 +24,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     lsb-release \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Add LLVM repository for Clang 16
 RUN wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - \
     && echo "deb http://apt.llvm.org/focal/ llvm-toolchain-focal-16 main" >> /etc/apt/sources.list \
     && apt-get update
 
-RUN add-apt-repository universe -y \
+RUN add-apt-repository ppa:ubuntu-toolchain-r/test -y \
     && apt-get update
 
-# Install PandA dependencies (GCC, Clang, multilib, libraries)
 RUN apt-get install -y --no-install-recommends \
     autoconf \
     autoconf-archive \
@@ -77,7 +79,7 @@ RUN apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------
-# PYTHON 3.13 INSTALLATION (NEW SECTION)
+# PYTHON 3.13
 # ---------------------------------------------------------
 
 RUN apt-get update && apt-get install -y \
@@ -94,13 +96,11 @@ RUN apt-get update && apt-get install -y \
     liblzma-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install pyenv
 RUN curl https://pyenv.run | bash
 
 ENV PYENV_ROOT="/root/.pyenv"
 ENV PATH="$PYENV_ROOT/bin:$PYENV_ROOT/shims:$PATH"
 
-# Install Python 3.13
 RUN pyenv install 3.13.0 && \
     pyenv global 3.13.0
 
@@ -108,20 +108,44 @@ RUN pyenv install 3.13.0 && \
 # COMPILER CONFIGURATION
 # ---------------------------------------------------------
 
-# Set default GCC/Clang versions
 RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 70 \
     --slave /usr/bin/g++ g++ /usr/bin/g++-8 \
     --slave /usr/bin/gfortran gfortran /usr/bin/gfortran-8 && \
     update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100
 
-# PANDA configuration
-# ENV PATH="/opt/panda/bin:${PATH}"
+# ---------------------------------------------------------
+# BUILD AND INSTALL PandA-bambu
+# Single RUN layer: clone → build → install → rm source (keeps layer small).
+# Clones the dev/panda branch (always latest — the branch of interest).
+# --recurse-submodules fetches all nested submodules (pugixml, abseil, etc.).
+# ---------------------------------------------------------
+
+RUN git clone --recurse-submodules -b dev/panda \
+        https://github.com/ferrandi/PandA-bambu.git \
+        /opt/panda-src \
+    && cd /opt/panda-src \
+    && make -f Makefile.init \
+    && mkdir build \
+    && cd build \
+    && ../configure --prefix=/usr/local \
+    && make -j$(nproc) \
+    && make install \
+    && cd / \
+    && rm -rf /opt/panda-src
+# bambu installs to /usr/local/bin (default configure prefix); already on PATH
 
 # ---------------------------------------------------------
-# SETUP USER WORKSPACE
+# PYTHON DEPENDENCIES
+# ---------------------------------------------------------
+
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
+
+# ---------------------------------------------------------
+# WORKSPACE
 # ---------------------------------------------------------
 
 WORKDIR /workspace
 
 CMD ["/bin/bash"]
-
