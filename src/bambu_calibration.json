@@ -1,37 +1,113 @@
 {
-  "platform": {
-    "note": "Bambu I386_GCC8 clock=5ns; fitted via lstsq over ex1-ex6 conv SA kernels",
-    "alpha_acc":        7.00302868,
-    "alpha_body_fixed": 2.17961750,
-    "alpha_post":       1.00352452,
-    "alpha_ex4":        -302.304,
-    "alpha_func":       361.0141,
-    "formula": "C = alpha_acc*X_acc + alpha_body_fixed*X_bf + alpha_post*X_post + alpha_ex4*is_ex4 + alpha_func"
+  "platforms": {
+    "I386_GCC8|5|default": {
+      "note": "Bambu I386_GCC8 clock=5ns; no device; fitted via 5-param lstsq over ex1-ex6 conv SA kernels (input_ports=2, P_out=1). alpha_outer_body is a legacy correction for n_seq=0 on single-port platforms.",
+      "alpha_acc": 7.00302868,
+      "alpha_body_fixed": 2.1796175,
+      "alpha_post": 1.00352452,
+      "alpha_func": 361.0141,
+      "alpha_outer_body": -302.304
+    },
+    "I386_GCC8|5|xc7z020-1clg484-VVD": {
+      "note": "fitted via lstsq+P_write grid search over 16 data points from: ex1, ex4",
+      "alpha_acc": 6.98474554,
+      "alpha_body_fixed": 2.0307065,
+      "alpha_post": 1.01183835,
+      "alpha_func": 209.5892,
+      "r2": 0.9999885226
+    },
+    "I386_GCC8|5|xcu55c-2Lfsvh2892-VVD": {
+      "note": "fitted via lstsq+P_write grid search over 7 data points (XML mode) from: ex11",
+      "alpha_acc": 2.813871,
+      "alpha_body_fixed": 1.41465561,
+      "alpha_post": 3.47665829,
+      "alpha_func": 0.0,
+      "r2": 0.9999444688
+    }
   },
   "experiments": {
     "ex1": {
+      "platform": "I386_GCC8|5|default",
       "C_sat": 2548,
-      "measured_cycles": {"1":23196,"2":12668,"4":7404,"8":4780,"16":3500,"32":2892,"64":2724,"96":2548}
+      "measured_cycles": {
+        "1": 23196,
+        "2": 12668,
+        "4": 7404,
+        "8": 4780,
+        "16": 3500,
+        "32": 2892,
+        "64": 2724,
+        "96": 2548
+      }
     },
     "ex2": {
+      "platform": "I386_GCC8|5|default",
       "C_sat": 14030,
-      "measured_cycles": {"1":179214,"2":94990,"4":52878,"8":31886,"16":21646,"32":16782,"64":15438,"96":14030}
+      "measured_cycles": {
+        "1": 179214,
+        "2": 94990,
+        "4": 52878,
+        "8": 31886,
+        "16": 21646,
+        "32": 16782,
+        "64": 15438,
+        "96": 14030
+      }
     },
     "ex3": {
+      "platform": "I386_GCC8|5|default",
       "C_sat": 2548,
-      "measured_cycles": {"1":17820,"2":9980,"4":6060,"8":4116,"16":3284,"32":2892,"64":2724,"72":2548}
+      "measured_cycles": {
+        "1": 17820,
+        "2": 9980,
+        "4": 6060,
+        "8": 4116,
+        "16": 3284,
+        "32": 2892,
+        "64": 2724,
+        "72": 2548
+      }
     },
     "ex4": {
+      "platform": "I386_GCC8|5|default",
       "C_sat": 406,
-      "measured_cycles": {"1":3458,"2":1890,"4":1106,"8":714,"16":518,"32":442,"64":406}
+      "measured_cycles": {
+        "1": 3458,
+        "2": 1890,
+        "4": 1106,
+        "8": 714,
+        "16": 518,
+        "32": 442,
+        "64": 406
+      }
     },
     "ex5": {
+      "platform": "I386_GCC8|5|default",
       "C_sat": 102540,
-      "measured_cycles": {"1":839628,"2":465100,"4":277836,"8":184332,"16":138188,"32":119436,"64":110476,"80":102540}
+      "measured_cycles": {
+        "1": 839628,
+        "2": 465100,
+        "4": 277836,
+        "8": 184332,
+        "16": 138188,
+        "32": 119436,
+        "64": 110476,
+        "80": 102540
+      }
     },
     "ex6": {
+      "platform": "I386_GCC8|5|default",
       "C_sat": 1504,
-      "measured_cycles": {"1":16420,"2":8860,"4":5080,"8":3190,"16":2266,"32":1810,"64":1642,"96":1504}
+      "measured_cycles": {
+        "1": 16420,
+        "2": 8860,
+        "4": 5080,
+        "8": 3190,
+        "16": 2266,
+        "32": 1810,
+        "64": 1642,
+        "96": 1504
+      }
     }
   }
 }

@@ -13,16 +13,20 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CONV_DIR="$REPO_ROOT/tests/eyeriss/conv/generated"
+# CONV_DIR="$REPO_ROOT/experiments/eyeriss/conv"
 
 # N_mul sweep per experiment (powers of 2 from 1 to U, plus U if not power of 2)
 declare -A SWEEP
-SWEEP[ex11]="1 2 4 8 16 32 64 128 168"   # U=96
-SWEEP[ex12]="1 2 4 8 16 32 64 128 168"
+# SWEEP[ex11]="1 2 4 8 16 32 64 128 168"   # U=96
+# SWEEP[ex12]="1 2 4 8 16 32 64 128 168"
+# SWEEP[ex1]="1 2 4 8 16 32 64 96"
+SWEEP[ex4]="1 2 4 8 16 32 64 65"
+
 
 # If experiments passed as args, use those; else run all
 # EXPERIMENTS=("${@:-ex1 ex2 ex3 ex4 ex5 ex6}")
 # EXPERIMENTS=("${@:-ex1 ex2 ex3 ex4 ex5 ex6 ex8 ex9 ex10}")
-EXPERIMENTS=("${@:-ex11 ex12}")
+EXPERIMENTS=("${@:-ex4}")
 if [[ ${#EXPERIMENTS[@]} -eq 1 && "${EXPERIMENTS[0]}" == *" "* ]]; then
   read -ra EXPERIMENTS <<< "${EXPERIMENTS[0]}"
 fi

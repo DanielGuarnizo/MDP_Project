@@ -2,21 +2,23 @@
 """
 Analytical cycle model for top_level_sa.c kernels.
 
-Fitted 5-parameter formula (derived from lstsq over ex1-ex6 Bambu logs):
-  C = alpha_acc * X_acc + alpha_body_fixed * X_bf + alpha_post * X_post
-      + alpha_ex4 * is_ex4 + alpha_func
+Fitted 4-parameter formula:
+  C = alpha_acc * X_acc + alpha_body_fixed * X_bf + alpha_post * X_post + alpha_func
 
-For ex1-ex3, ex5, ex6 (inner r-loop structure):
+For inner r-loop kernels (n_seq_loops >= 1):
   B_acc  = ceil(N_PE / N_mul)
   X_acc  = n_outer * n_inner * B_acc
   X_bf   = n_outer * n_inner * body_const       (body_const from calib)
   X_post = n_outer * post_rloop_states           (computed analytically)
 
-For ex4-type (no inner r-loop, n_seq_loops=0):
+For outer-body kernels (no inner r-loop, n_seq_loops=0):
   X_acc  = n_outer * (B_acc + red_batches)       (compute + reduction FP batches)
   X_bf   = n_outer * body_const                  (non-FP outer-body overhead)
   X_post = 0
-  is_ex4 = 1
+
+body_const for n_seq=0 includes a zero-init correction: ceil(N_PE / P_write) states,
+where P_write is the number of register writes Bambu can schedule per FSM state
+(a platform constant fitted alongside the alphas). P_write=None disables this term.
 
 Usage:
     python sa_model.py <top_level_sa.c> [--sweep] [--calib PATH] [--compare]
@@ -27,6 +29,8 @@ import argparse
 import json
 import math
 import re
+import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -63,7 +67,6 @@ def parse_sa_c(text: str) -> dict:
 
     if zero_pos != -1 and phase1_pos != -1:
         inner_region = text[zero_pos:phase1_pos]
-        # Exclude zero-init loops (sarows_* / sacols_*); capture all other nounroll loops
         inner_bounds = [int(b) for b in re.findall(
             r'#pragma GCC nounroll\s+for\s*\(\s*int\s+(?!sarows_|sacols_)\w[^;]+;\s*\w+\s*<\s*(\d+)',
             inner_region)]
@@ -78,25 +81,31 @@ def parse_sa_c(text: str) -> dict:
     p2b_start = text.find('Phase 2b')
     p2a_text  = text[p2a_start:p2b_start] if p2a_start != -1 and p2b_start != -1 else ""
 
-    # SA spatial dimensions from loop comments: // S:N  // C:N  // Q:N  // M:N
     sa_dims: dict[str, int] = {}
     for label in ('S', 'C', 'Q', 'M'):
         m2 = re.search(rf'//\s+{label}:(\d+)', p2a_text)
         if m2:
             sa_dims[label] = int(m2.group(1))
 
-    # Which sarows variable carries the bank bit (may be inside a complex expression)
     m2 = re.search(r'int c_global\s*=[^;]+?(sarows_\d+)', p2a_text)
-    c_global_var = m2.group(1) if m2 else None   # 'sarows_0' or 'sarows_1'
+    c_global_var = m2.group(1) if m2 else None
 
-    # Does sarows_0 appear in the in_col formula? (presence of a filter-height S dim)
     sarows0_in_col = bool(re.search(r'in_col\s*=.*\+\s*sarows_0', p2a_text))
+
+    # ---- Port counts ----
+    m_ip = re.search(r'const\s+int\s+input_ports\s*=\s*(\d+)', text)
+    input_ports = int(m_ip.group(1)) if m_ip else 2   # default: 2-bank split
+
+    P_out = len(re.findall(r'#pragma HLS interface port = dram_output_p', text))
+    if P_out == 0:
+        P_out = 1   # default: all writes serialized (single port)
 
     return {
         'N_PE': N_PE, 'N_W': N_W, 'N_out': N_out, 'N_red': N_red,
         'n_outer': n_outer, 'n_inner': n_inner, 'n_seq_loops': n_seq_loops,
         'sa_dims': sa_dims, 'c_global_var': c_global_var,
         'sarows0_in_col': sarows0_in_col,
+        'input_ports': input_ports, 'P_out': P_out,
     }
 
 
@@ -104,61 +113,58 @@ def parse_sa_c(text: str) -> dict:
 # Analytical body_const derivation
 # =============================================================================
 
-def compute_body_const(params: dict) -> int:
+def compute_body_const(params: dict, P_write: int | None = None) -> int:
     """
     Derive body_const analytically from Phase 2a structure.
 
     For n_seq >= 1 (inner r-loop kernels):
       body_const = reads_bottleneck + 9 + 4*(n_seq-1) + 2*(weight==input)
       where reads_bottleneck = max(weight_reads_bank0, input_reads_bank0)
+      bank0_count = ceil(C_dim / input_ports)
       9 = fixed r-loop overhead (setup + mul-chain + READ_COND)
       4*(n_seq-1) = extra phi/prologue per extra sequential dimension
       2*(tie) = tied-bank sync cost
 
-    For n_seq == 0 (outer-body kernels, ex4-type):
-      body_const = reads_bottleneck + N_out + 4 + 2*(weight==input)
-      N_out is added because writes are inside body (no post_rloop for is_ex4=1).
-      4 = fixed outer-body control overhead (no r-loop READ_COND).
-
-    Verified: ex1=33, ex2=23, ex3=33, ex4=30, ex5=33, ex6=21, ex7=47, ex8-10=37.
+    For n_seq == 0 (outer-body kernels):
+      body_const = reads_bottleneck + ceil(N_out/P_out) + ceil(N_PE/P_write) + 4 + 2*(tie)
+      ceil(N_out/P_out): write states (Bambu serializes writes over P_out ports)
+      ceil(N_PE/P_write): zero-init states (exposed only when n_seq=0, no inner loop to overlap)
+      P_write=None → zinit_states=0 (backward compat for platforms without this constant)
     """
     n_seq = params['n_seq_loops']
 
     sa_dims        = params.get('sa_dims', {})
-    c_global_var   = params.get('c_global_var')    # 'sarows_0' or 'sarows_1'
+    c_global_var   = params.get('c_global_var')
     sarows0_in_col = params.get('sarows0_in_col', False)
     N_W            = params['N_W']
     N_out          = params['N_out']
+    N_PE           = params['N_PE']
+    input_ports    = params.get('input_ports', 2)
+    P_out          = params.get('P_out', 1)
 
     C_dim = sa_dims.get('C', 1)
     Q_dim = sa_dims.get('Q', 1)
-    S_dim = sa_dims.get('S', 0)   # 0 if no filter-height S in layout
+    S_dim = sa_dims.get('S', 0)
     M_dim = sa_dims.get('M', 1)
 
-    bank0_count = math.ceil(C_dim / 2)
+    bank0_count = math.ceil(C_dim / input_ports)
 
     if c_global_var == 'sarows_1':
-        # Bank bit on sarows_1 (C). sarows_0 = S, sacols_1 = M.
         weight_bank0 = bank0_count * S_dim * M_dim
     else:
-        # Bank bit on sarows_0 (C). Other Phase-1 dims = N_W / C_dim.
         weight_bank0 = bank0_count * (N_W // C_dim)
 
-    # in_row_base distinct values per bank-0:
-    #   n_seq>=2: c_blk = c_seq (outer seq var, fixed per r-loop body) → 1
-    #   n_seq<=1: c_blk = sarows_1>>1 → ceil(C_dim/2) distinct values
-    in_row_base = 1 if n_seq >= 2 else bank0_count
-
-    # in_col distinct values: Q_dim + (S_dim-1) if sarows_0 in in_col, else Q_dim
+    in_row_base     = 1 if n_seq >= 2 else bank0_count
     in_col_distinct = (Q_dim + S_dim - 1) if sarows0_in_col else Q_dim
-
-    input_bank0 = in_row_base * in_col_distinct
+    input_bank0     = in_row_base * in_col_distinct
 
     reads_bottleneck = max(weight_bank0, input_bank0)
     tie = int(weight_bank0 == input_bank0)
 
     if n_seq == 0:
-        return reads_bottleneck + N_out + 4 + 2 * tie
+        N_write_states = math.ceil(N_out / P_out)
+        zinit_states   = math.ceil(N_PE / P_write) if P_write is not None else 0
+        return reads_bottleneck + N_write_states + zinit_states + 4 + 2 * tie
     else:
         return reads_bottleneck + 9 + 4 * max(0, n_seq - 1) + 2 * tie
 
@@ -192,20 +198,22 @@ def compute_red_gaps(N_out: int, N_red: int, N_mul: int, N_PE: int) -> int:
     return gaps
 
 
-def compute_post_rloop(N_out: int, N_red: int, N_mul: int, N_PE: int) -> int:
+def compute_post_rloop(N_out: int, N_red: int, N_mul: int, N_PE: int,
+                       P_out: int = 1) -> int:
     """
-    Analytical post_rloop_states for ex1-ex3, ex5, ex6 kernels.
+    Analytical post_rloop_states for inner r-loop kernels.
 
       post_rloop = 1(entry) + 7*red_batches + n_gaps
-                   + extra_write0 + (N_out-1)(writes) + 1(outer_check)
+                   + extra_write0 + (ceil(N_out/P_out)-1)(writes) + 1(outer_check)
 
     extra_write0 = 0 if N_mul >= N_PE (write0 parallel with last reduction state),
                    1 otherwise.
+    P_out physical output ports allow ceil(N_out/P_out) write states instead of N_out.
     """
     rb    = compute_red_batches(N_out, N_red, N_mul)
     gaps  = compute_red_gaps(N_out, N_red, N_mul, N_PE)
     ew0   = 0 if N_mul >= N_PE else 1
-    return 1 + 7 * rb + gaps + ew0 + (N_out - 1) + 1
+    return 1 + 7 * rb + gaps + ew0 + (math.ceil(N_out / P_out) - 1) + 1
 
 
 # =============================================================================
@@ -214,45 +222,54 @@ def compute_post_rloop(N_out: int, N_red: int, N_mul: int, N_PE: int) -> int:
 
 def predict(params: dict, N_mul: int, calib: dict) -> dict:
     """
-    Predict total cycles using the fitted 5-parameter formula.
+    Predict total cycles using the 4-parameter formula:
+      C = alpha_acc*X_acc + alpha_body_fixed*X_bf + alpha_post*X_post + alpha_func
 
-    calib must contain: alpha_acc, alpha_body_fixed, alpha_post, alpha_ex4, alpha_func.
-    body_const is always derived analytically from params via compute_body_const().
+    calib must contain: alpha_acc, alpha_body_fixed, alpha_post, alpha_func.
+    Optional:
+      P_write        — platform constant for zero-init correction in n_seq=0 kernels.
+      alpha_outer_body — legacy additive correction for n_seq=0 (0.0 if absent).
+                        Used for old single-port platforms where write states inflate X_bf.
+
+    body_const is always derived analytically from params via compute_body_const(P_write).
     """
-    alpha_acc   = calib['alpha_acc']
-    alpha_bf    = calib['alpha_body_fixed']
-    alpha_post  = calib['alpha_post']
-    alpha_ex4   = calib['alpha_ex4']
-    alpha_func  = calib['alpha_func']
+    alpha_acc        = calib['alpha_acc']
+    alpha_bf         = calib['alpha_body_fixed']
+    alpha_post       = calib['alpha_post']
+    alpha_func       = calib['alpha_func']
+    P_write          = calib.get('P_write')
+    alpha_outer_body = calib.get('alpha_outer_body', 0.0)
 
-    body_const = compute_body_const(params)
+    body_const = compute_body_const(params, P_write)
 
-    n_outer = params['n_outer']
-    n_inner = params['n_inner']
-    N_PE    = params['N_PE']
-    N_out   = params['N_out']
-    N_red   = params['N_red']
-    is_ex4  = 1 if params['n_seq_loops'] == 0 else 0
+    n_outer       = params['n_outer']
+    n_inner       = params['n_inner']
+    N_PE          = params['N_PE']
+    N_out         = params['N_out']
+    N_red         = params['N_red']
+    P_out         = params.get('P_out', 1)
+    is_outer_body = params['n_seq_loops'] == 0
 
     B_acc = math.ceil(N_PE / N_mul)
 
-    if is_ex4:
+    if is_outer_body:
         rb     = compute_red_batches(N_out, N_red, N_mul)
         X_acc  = n_outer * (B_acc + rb)
         X_bf   = n_outer * body_const
         X_post = 0
     else:
-        post   = compute_post_rloop(N_out, N_red, N_mul, N_PE)
+        post   = compute_post_rloop(N_out, N_red, N_mul, N_PE, P_out)
         X_acc  = n_outer * n_inner * B_acc
         X_bf   = n_outer * n_inner * body_const
         X_post = n_outer * post
 
-    C_total = (alpha_acc * X_acc + alpha_bf * X_bf +
-               alpha_post * X_post + alpha_ex4 * is_ex4 + alpha_func)
+    C_total = (alpha_acc * X_acc + alpha_bf * X_bf + alpha_post * X_post + alpha_func
+               + alpha_outer_body * int(is_outer_body))
 
     return {
         'C_total': round(C_total),
-        'features': {'X_acc': X_acc, 'X_bf': X_bf, 'X_post': X_post, 'is_ex4': is_ex4},
+        'features': {'X_acc': X_acc, 'X_bf': X_bf, 'X_post': X_post,
+                     'body_const': body_const},
         'B_acc': B_acc,
     }
 
@@ -265,22 +282,60 @@ def predict_sweep(params: dict, calib: dict,
 
 
 # =============================================================================
-# Calibration loading
+# Platform / calibration helpers
 # =============================================================================
 
-def load_calib(calib_path: Path, ex_key: str | None = None) -> dict:
+def _load_config(c_path: Path) -> dict | None:
+    """Search for config.json in the same dir or its parent."""
+    for d in [c_path.parent, c_path.parent.parent]:
+        p = d / "config.json"
+        if p.exists():
+            return json.loads(p.read_text())
+    return None
+
+
+def _platform_key(cfg: dict) -> str:
+    """Derive a platform identifier string from a config dict."""
+    b   = cfg.get("bambu", {})
+    dev = b.get("device", {}).get("name", "default")
+    return f"{b.get('compiler', 'unknown')}|{b.get('clock_period', '?')}|{dev}"
+
+
+def load_calib(calib_path: Path, ex_key: str | None = None,
+               platform_key: str | None = None) -> dict:
     """
-    Load platform constants + experiment body_const from bambu_calibration.json.
-    ex_key: e.g. 'ex1', 'ex2', … Determines which body_const to use.
+    Load platform alphas + experiment measured cycles from bambu_calibration.json.
+
+    Supports both the new 'platforms' dict format and the legacy flat 'platform' key.
     """
     raw = json.loads(calib_path.read_text())
-    plat = raw.get('platform', {})
+
+    if "platforms" in raw:
+        if platform_key is None:
+            # Auto-infer platform from experiments dict when ex_key is given
+            if ex_key and ex_key in raw.get('experiments', {}):
+                platform_key = raw['experiments'][ex_key].get('platform')
+        if platform_key is None:
+            # Last resort: use the first platform (matches legacy single-platform behaviour)
+            platform_key = next(iter(raw["platforms"]))
+        plat_data = raw["platforms"].get(platform_key)
+        if plat_data is None:
+            available = ", ".join(f"'{k}'" for k in raw["platforms"])
+            print(f"Error: No calibration found for platform '{platform_key}'.")
+            print(f"  Available platforms: {available}")
+            print(f"  To add calibration, run Bambu with varying N_mul and fit the alphas.")
+            sys.exit(1)
+    else:
+        # Legacy flat format
+        plat_data = raw.get("platform", {})
+
     calib = {
-        'alpha_acc':        plat.get('alpha_acc',        7.003),
-        'alpha_body_fixed': plat.get('alpha_body_fixed', 2.180),
-        'alpha_post':       plat.get('alpha_post',       1.004),
-        'alpha_ex4':        plat.get('alpha_ex4',        -302.3),
-        'alpha_func':       plat.get('alpha_func',        361.0),
+        'alpha_acc':        plat_data.get('alpha_acc',        7.003),
+        'alpha_body_fixed': plat_data.get('alpha_body_fixed', 2.180),
+        'alpha_post':       plat_data.get('alpha_post',       1.004),
+        'alpha_func':       plat_data.get('alpha_func',       361.0),
+        'P_write':          plat_data.get('P_write'),           # None = no zero-init correction
+        'alpha_outer_body': plat_data.get('alpha_outer_body', 0.0),  # 0 = no legacy correction
         'measured_cycles':  {},
     }
     if ex_key and ex_key in raw.get('experiments', {}):
@@ -299,6 +354,28 @@ def _infer_ex_key(c_path: Path) -> str | None:
     return None
 
 
+def _parse_cycles_xml(xml_path: Path) -> int:
+    root = ET.parse(xml_path).getroot()
+    el = root.find('CYCLES')
+    if el is None:
+        raise ValueError(f"No <CYCLES> element in {xml_path}")
+    return int(el.get('value'))
+
+
+def _load_measured_from_bambu(c_path: Path) -> dict[int, int]:
+    """Read measured cycle counts from Bambu_outputs/sa/nX/bambu_results_0.xml."""
+    sa_dir = c_path.parent / "Bambu_outputs" / "sa"
+    if not sa_dir.is_dir():
+        return {}
+    measured: dict[int, int] = {}
+    for d in sa_dir.iterdir():
+        if d.is_dir() and d.name.startswith('n') and d.name[1:].isdigit():
+            xml = d / "bambu_results_0.xml"
+            if xml.exists():
+                measured[int(d.name[1:])] = _parse_cycles_xml(xml)
+    return measured
+
+
 # =============================================================================
 # CLI
 # =============================================================================
@@ -309,7 +386,7 @@ def main() -> None:
     parser.add_argument("N_mul", nargs="*", type=int,
                         help="Number of multipliers (can specify multiple)")
     parser.add_argument("--sweep", action="store_true",
-                        help="Sweep N_mul = 1,2,4,8,16,24,32,48,64,96")
+                        help="Sweep N_mul = 1,2,4,8,16,32,64,N_PE")
     parser.add_argument("--calib", default=None,
                         help="Path to bambu_calibration.json (default: auto-locate)")
     parser.add_argument("--compare", action="store_true",
@@ -319,6 +396,15 @@ def main() -> None:
     c_path = Path(args.c_file)
     if not c_path.exists():
         raise FileNotFoundError(c_path)
+
+    # Require config.json to determine the platform
+    cfg = _load_config(c_path)
+    if cfg is None:
+        print(f"Error: No config.json found near '{c_path}'.")
+        print("  A config.json with 'bambu.compiler', 'bambu.clock_period', and optionally")
+        print("  'bambu.device.name' is required to select the correct calibration platform.")
+        sys.exit(1)
+    platform_key = _platform_key(cfg)
 
     if args.calib:
         calib_path = Path(args.calib)
@@ -333,25 +419,33 @@ def main() -> None:
             raise FileNotFoundError("bambu_calibration.json not found; use --calib")
 
     ex_key = _infer_ex_key(c_path)
-    calib  = load_calib(calib_path, ex_key)
+    calib  = load_calib(calib_path, ex_key, platform_key)
     params = parse_sa_c(c_path.read_text())
 
-    body_const_analytical = compute_body_const(params)
+    P_write = calib.get('P_write')
+    body_const_analytical = compute_body_const(params, P_write)
 
-    print(f"\nFile  : {c_path.name}  [{ex_key or 'unknown'}]")
-    print(f"Params: N_PE={params['N_PE']}, N_W={params['N_W']}, "
+    print(f"\nFile    : {c_path.name}  [{ex_key or 'unknown'}]")
+    print(f"Platform: {platform_key}")
+    print(f"Params  : N_PE={params['N_PE']}, N_W={params['N_W']}, "
           f"N_out={params['N_out']}, N_red={params['N_red']}, "
           f"n_outer={params['n_outer']}, n_inner={params['n_inner']}, "
-          f"n_seq={params['n_seq_loops']}")
-    print(f"Calib : α_acc={calib['alpha_acc']:.4f}, α_bf={calib['alpha_body_fixed']:.4f}, "
+          f"n_seq={params['n_seq_loops']}, "
+          f"input_ports={params['input_ports']}, P_out={params['P_out']}")
+    p_write_str = str(P_write) if P_write is not None else "None"
+    print(f"Calib   : α_acc={calib['alpha_acc']:.4f}, α_bf={calib['alpha_body_fixed']:.4f}, "
           f"α_post={calib['alpha_post']:.4f}, α_func={calib['alpha_func']:.1f}, "
-          f"body_const={body_const_analytical} [analytical]")
+          f"P_write={p_write_str}, body_const={body_const_analytical} [analytical]")
 
     if args.sweep or not args.N_mul:
         N_PE   = params['N_PE']
         n_muls = sorted(set([1, 2, 4, 8, 16, 32, 64, N_PE]))
         results = predict_sweep(params, calib, n_muls)
-        measured = calib['measured_cycles']
+
+        # Prefer measured cycles from local Bambu XML files; fall back to JSON
+        measured = _load_measured_from_bambu(c_path)
+        if not measured:
+            measured = calib['measured_cycles']
 
         print(f"\n{'N_mul':>6}  {'Predicted':>10}  {'Measured':>10}  {'Error%':>8}  B_acc")
         print("  " + "-" * 52)
@@ -378,7 +472,7 @@ def main() -> None:
             feat = r['features']
             print(f"\n  N_mul={n}: C_total={r['C_total']:,}  B_acc={r['B_acc']}")
             print(f"    X_acc={feat['X_acc']:,}  X_bf={feat['X_bf']:,}  "
-                  f"X_post={feat['X_post']:,}  is_ex4={feat['is_ex4']}")
+                  f"X_post={feat['X_post']:,}  body_const={feat['body_const']}")
 
     print()
 

@@ -125,7 +125,14 @@
       "Bash(docker stop *)",
       "Bash(docker rm *)",
       "Bash(docker rmi *)",
-      "Bash(pkill -f \"docker build\")"
+      "Bash(pkill -f \"docker build\")",
+      "Bash(grep *)",
+      "Bash(mkdir -p /tmp/bambu_n168_run)",
+      "Read(//tmp/**)",
+      "Bash(bash /workspace/tests/eyeriss/conv/generated/ex11/compile_bambu.sh /workspace/tests/eyeriss/conv/generated/ex11/top_level_sa.c 168 168)",
+      "Bash(tee /tmp/bambu_n168_full.log)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(sort -k5 -rh)"
     ]
   }
 }
