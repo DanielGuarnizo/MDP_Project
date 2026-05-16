@@ -1,0 +1,89 @@
+{
+  "kernel_name": "panda",
+  "buffers": [
+    {
+      "name": "dram_in_b0",
+      "size_bytes": 288,
+      "direction": "input",
+      "group_id": 0,
+      "axi_bundle": "m_axi_gmem_in0"
+    },
+    {
+      "name": "dram_in_b1",
+      "size_bytes": 288,
+      "direction": "input",
+      "group_id": 1,
+      "axi_bundle": "m_axi_gmem_in1"
+    },
+    {
+      "name": "dram_w_b0",
+      "size_bytes": 288,
+      "direction": "input",
+      "group_id": 2,
+      "axi_bundle": "m_axi_gmem_w0"
+    },
+    {
+      "name": "dram_w_b1",
+      "size_bytes": 288,
+      "direction": "input",
+      "group_id": 3,
+      "axi_bundle": "m_axi_gmem_w1"
+    },
+    {
+      "name": "dram_out_b0",
+      "size_bytes": 32,
+      "direction": "output",
+      "group_id": 4,
+      "axi_bundle": "m_axi_gmem_out0"
+    },
+    {
+      "name": "dram_out_b1",
+      "size_bytes": 32,
+      "direction": "output",
+      "group_id": 5,
+      "axi_bundle": "m_axi_gmem_out1"
+    },
+    {
+      "name": "dram_out_b2",
+      "size_bytes": 32,
+      "direction": "output",
+      "group_id": 6,
+      "axi_bundle": "m_axi_gmem_out2"
+    },
+    {
+      "name": "dram_out_b3",
+      "size_bytes": 32,
+      "direction": "output",
+      "group_id": 7,
+      "axi_bundle": "m_axi_gmem_out3"
+    },
+    {
+      "name": "dram_out_b4",
+      "size_bytes": 32,
+      "direction": "output",
+      "group_id": 8,
+      "axi_bundle": "m_axi_gmem_out4"
+    },
+    {
+      "name": "dram_out_b5",
+      "size_bytes": 32,
+      "direction": "output",
+      "group_id": 9,
+      "axi_bundle": "m_axi_gmem_out5"
+    },
+    {
+      "name": "dram_out_b6",
+      "size_bytes": 32,
+      "direction": "output",
+      "group_id": 10,
+      "axi_bundle": "m_axi_gmem_out6"
+    },
+    {
+      "name": "dram_out_b7",
+      "size_bytes": 32,
+      "direction": "output",
+      "group_id": 11,
+      "axi_bundle": "m_axi_gmem_out7"
+    }
+  ]
+}

@@ -132,7 +132,8 @@
       "Bash(bash /workspace/tests/eyeriss/conv/generated/ex11/compile_bambu.sh /workspace/tests/eyeriss/conv/generated/ex11/top_level_sa.c 168 168)",
       "Bash(tee /tmp/bambu_n168_full.log)",
       "Bash(echo \"EXIT: $?\")",
-      "Bash(sort -k5 -rh)"
+      "Bash(sort -k5 -rh)",
+      "Read(//private/tmp/hacc_test_conv/**)"
     ]
   }
 }

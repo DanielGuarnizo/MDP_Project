@@ -1,0 +1,14 @@
+cmake_minimum_required(VERSION 3.16)
+
+set(USER_COMPILE_SOURCES      "${CMAKE_CURRENT_SOURCE_DIR}/src/harness.cpp")
+set(USER_INCLUDE_DIRECTORIES  "${CMAKE_CURRENT_SOURCE_DIR}/include")
+set(USER_COMPILE_DEFINITIONS)
+set(USER_COMPILE_OTHER_FLAGS  "-std=c++17")
+set(USER_LINK_LIBRARIES       xrt_coreutil xrt++ xrt_core xilinxopencl rt)
+set(USER_LINK_DIRECTORIES)
+set(USER_LINK_OTHER_FLAGS)
+set(USER_COMPILE_OPTIONS
+    -Wall -Wextra -O0 -g3
+    ${USER_COMPILE_OTHER_FLAGS}
+)
+set(USER_LINK_OPTIONS ${USER_LINK_OTHER_FLAGS})

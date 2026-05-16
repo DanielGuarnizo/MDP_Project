@@ -1,0 +1,12 @@
+# Ignore generated packaging/output directories
+**/xo/
+**/ip_pkg/
+**/ip_pckg/
+**/build/
+**/build/**
+
+# Ignore Vivado generated logs/journals
+**/vivado.log
+**/vivado.jou
+**/vivado*.log
+**/vivado*.jou

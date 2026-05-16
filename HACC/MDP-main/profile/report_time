@@ -1,0 +1,111 @@
+# MDP
+
+## Timing
+
+## Version 1
+
+Interface note: Version 1 uses only `m_axi_gmemm`.
+
+### HW Emulation
+
+Observed total time: `6m 05s`
+
+| Item | Value (ms) | Caption |
+| --- | ---: | --- |
+| Parse input | 43.927 | Time spent parsing input data on the host side. |
+| Init XRT | 21472.9 | XRT runtime and device context initialization time. |
+| BO alloc | 125.01 | Buffer object allocation time in memory. |
+| H2D write | 1.68708 | Host-to-device write time into buffers. |
+| H2D sync | 131.314 | Host-to-device synchronization/transfer time. |
+| Kernel (wait) | 283045 | Kernel execution time (waiting for completion). |
+| D2H sync | 43.1978 | Device-to-host synchronization/transfer time. |
+| D2H read | 0.115451 | Host-side read time from received buffers. |
+| Write output | 0.382424 | Time to write final output to file/stream. |
+| TOTAL end-to-end | 304863 | Total end-to-end measured time in ms. |
+
+### Hardware
+
+| Item | Value (ms) | Caption |
+| --- | ---: | --- |
+| Parse input | 26.4705 | Time spent parsing input data on the host side. |
+| Init XRT | 167.879 | XRT runtime and device context initialization time. |
+| BO alloc | 1.59286 | Buffer object allocation time in memory. |
+| H2D write | 0.252889 | Host-to-device write time into buffers. |
+| H2D sync | 0.38543 | Host-to-device synchronization/transfer time. |
+| Kernel (wait) | 246.895 | Kernel execution time (waiting for completion). |
+| D2H sync | 0.072798 | Device-to-host synchronization/transfer time. |
+| D2H read | 0.013656 | Host-side read time from received buffers. |
+| Write output | 2.20446 | Time to write final output to file/stream. |
+| TOTAL end-to-end | 445.808 | Total end-to-end measured time in ms. |
+
+## Version 2
+
+Interface note: Version 2 uses `m_axi_1`, `m_axi_2`, `m_axi_3`, and `Q`.
+
+### HW Emulation
+
+Observed total time: `6m 46s`
+
+| Item | Value (ms) | Caption |
+| --- | ---: | --- |
+| Parse input | 68.5416 | Time spent parsing input data on the host side. |
+| Init XRT | 21818.3 | XRT runtime and device context initialization time. |
+| BO alloc | 124.51 | Buffer object allocation time in memory. |
+| H2D write | 1.85389 | Host-to-device write time into buffers. |
+| H2D sync | 133.515 | Host-to-device synchronization/transfer time. |
+| Kernel (wait) | 321048 | Kernel execution time (waiting for completion). |
+| D2H sync | 41.4254 | Device-to-host synchronization/transfer time. |
+| D2H read | 0.072604 | Host-side read time from received buffers. |
+| Write output | 0.210913 | Time to write final output to file/stream. |
+| TOTAL end-to-end | 343236 | Total end-to-end measured time in ms. |
+
+### HW
+
+| Item | Value (ms) | Caption |
+| --- | ---: | --- |
+| Parse input | 27.8885 | Time spent parsing input data on the host side. |
+| Init XRT | 198.928 | XRT runtime and device context initialization time. |
+| BO alloc | 1.67879 | Buffer object allocation time in memory. |
+| H2D write | 0.192104 | Host-to-device write time into buffers. |
+| H2D sync | 0.381412 | Host-to-device synchronization/transfer time. |
+| Kernel (wait) | 246.276 | Kernel execution time (waiting for completion). |
+| D2H sync | 0.097265 | Device-to-host synchronization/transfer time. |
+| D2H read | 0.013666 | Host-side read time from received buffers. |
+| Write output | 2.12421 | Time to write final output to file/stream. |
+| TOTAL end-to-end | 477.612 | Total end-to-end measured time in ms. |
+
+## Version 3
+
+Interface note: Version 3 uses `m_axi_0` and `m_axi_1`, connected to two different HBM banks.
+
+### HW Emulation
+
+Observed total time: `8m 04s`
+
+| Item | Value (ms) | Caption |
+| --- | ---: | --- |
+| Parse input | 24.936684 | Time spent parsing input data on the host side. |
+| Init XRT | 21102.086696 | XRT runtime and device context initialization time. |
+| BO alloc | 249.320351 | Buffer object allocation time in memory. |
+| H2D write | 3.008670 | Host-to-device write time into buffers. |
+| H2D sync | 249.610857 | Host-to-device synchronization/transfer time. |
+| Kernel (wait) | 467040.161201 | Kernel execution time (waiting for completion). |
+| D2H sync | 40.721977 | Device-to-host synchronization/transfer time. |
+| D2H read | 0.012579 | Host-side read time from received buffers. |
+| Write output | 0.142127 | Time to write final output to file/stream. |
+| TOTAL end-to-end | 488710.311133 | Total end-to-end measured time in ms. |
+
+### HW
+
+| Item | Value (ms) | Caption |
+| --- | ---: | --- |
+| Parse input | 28.387165 | Time spent parsing input data on the host side. |
+| Init XRT | 169.160489 | XRT runtime and device context initialization time. |
+| BO alloc | 2.484069 | Buffer object allocation time in memory. |
+| H2D write | 1.694585 | Host-to-device write time into buffers. |
+| H2D sync | 0.486350 | Host-to-device synchronization/transfer time. |
+| Kernel (wait) | 260.799234 | Kernel execution time (waiting for completion). |
+| D2H sync | 0.082556 | Device-to-host synchronization/transfer time. |
+| D2H read | 0.001162 | Host-side read time from received buffers. |
+| Write output | 4.282851 | Time to write final output to file/stream. |
+| TOTAL end-to-end | 468.264988 | Total end-to-end measured time in ms. |
