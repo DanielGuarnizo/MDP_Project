@@ -1,0 +1,82 @@
+
+=== PERFORMANCE ANALYSIS: 20260514_170825 ===
+Timestamp  : 2026-05-22 09:45:17
+Alveo node : hacc-alveo-u55c-01
+Build node : hacc-build-01
+Input data : /Users/danielguarnizo/workspace/Master/MDP/HACC/20260514_170825/input_data
+Run dir    : ~/workspace/run (on hacc-alveo-u55c-01)
+Report     : /Users/danielguarnizo/workspace/Master/MDP/HACC/20260514_170825/perf_20260522_094517.txt
+
+>>> Step 1/6 — Syncing harness.cpp to hacc-build-01 ...
+hacc-build-01.inf.ethz.ch - Ubuntu 22.04 (x86_64) [Systems_Cluster]
++-----------------------------------------------------------+
+|                                                           |
+|     Heterogeneous Accelerated Compute Clusters (HACC)     |
+|            AMD University Program (AUP)                   |
+|                                                           |
+|         The HACC - AUP is a special initiative to         |
+|  support novel research in adaptive compute acceleration  |
+|               for high-performance computing              |
+|                                                           |
+|          Learn more at https://www.amd-haccs.io           |
+|                                                           |
+|         -----------------------------------------         |
+|                                                           |
+|     Institute for Computing Platforms - Systems Group     |
+|                                                           |
+|                     ETH Zürich - 2022                     |
+|                                                           |
++-----------------------------------------------------------+
+
+    OK
+>>> Step 2/6 — Recompiling on hacc-build-01 (cmake, ~2 min) ...
+hacc-build-01.inf.ethz.ch - Ubuntu 22.04 (x86_64) [Systems_Cluster]
++-----------------------------------------------------------+
+|                                                           |
+|     Heterogeneous Accelerated Compute Clusters (HACC)     |
+|            AMD University Program (AUP)                   |
+|                                                           |
+|         The HACC - AUP is a special initiative to         |
+|  support novel research in adaptive compute acceleration  |
+|               for high-performance computing              |
+|                                                           |
+|          Learn more at https://www.amd-haccs.io           |
+|                                                           |
+|         -----------------------------------------         |
+|                                                           |
+|     Institute for Computing Platforms - Systems Group     |
+|                                                           |
+|                     ETH Zürich - 2022                     |
+|                                                           |
++-----------------------------------------------------------+
+
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/dguarnizo/workspace/deploy/20260514_170825/build/host
+[ 66%] Building CXX object CMakeFiles/bambu_application.dir/src/harness.cpp.o
+[100%] Linking CXX executable bambu_application
+[100%] Built target bambu_application
+    Binary: 630K /home/dguarnizo/workspace/deploy/20260514_170825/build/host/bambu_application
+>>> Step 3/6 — Copying new binary hacc-build-01 → hacc-alveo-u55c-01 ...
+hacc-build-01.inf.ethz.ch - Ubuntu 22.04 (x86_64) [Systems_Cluster]
++-----------------------------------------------------------+
+|                                                           |
+|     Heterogeneous Accelerated Compute Clusters (HACC)     |
+|            AMD University Program (AUP)                   |
+|                                                           |
+|         The HACC - AUP is a special initiative to         |
+|  support novel research in adaptive compute acceleration  |
+|               for high-performance computing              |
+|                                                           |
+|          Learn more at https://www.amd-haccs.io           |
+|                                                           |
+|         -----------------------------------------         |
+|                                                           |
+|     Institute for Computing Platforms - Systems Group     |
+|                                                           |
+|                     ETH Zürich - 2022                     |
+|                                                           |
++-----------------------------------------------------------+
+
+ssh: Could not resolve hostname hacc-alveo-u55c-01: Temporary failure in name resolution
+lost connection

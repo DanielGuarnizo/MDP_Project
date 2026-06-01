@@ -93,7 +93,34 @@ def _match_args_to_bundles(scalar_args: List[str], axi_bundles: List[str]) -> Di
             unmatched.append(arg)
 
     remaining = [b for b in axi_bundles if b not in used]
+    still_unmatched = []
     for arg, bundle in zip(unmatched, remaining):
         result[arg] = bundle
+    still_unmatched = [a for a in unmatched if a not in result]
+
+    # Second pass: args that got no bundle (e.g. dram_output_pN shares gmem_N with
+    # dram_input_pN because Bambu reuses the same AXI master for reads and writes).
+    # Match by identical numeric/letter suffix (p0, p1, b0, b1, …).
+    for arg in still_unmatched:
+        suf = re.search(r'_([a-z]*\d+)$', arg)
+        if suf:
+            pat = suf.group(1)
+            for other, bundle in result.items():
+                if other != arg and re.search(r'_' + re.escape(pat) + r'$', other):
+                    result[arg] = bundle
+                    break
+
+    # Third pass: args still unmapped (e.g. dram_output_p4-p7 when all bundles are
+    # taken by inputs/weights). Map _pN → axi_bundles[N % len(axi_bundles)] so that
+    # output_p4 reuses the same AXI master as weight_p0 (both on gmem_4), matching
+    # the #pragma HLS interface bundle assignments in the generated C code.
+    if axi_bundles:
+        for arg in still_unmatched:
+            if arg in result:
+                continue
+            suf = re.search(r'_p(\d+)$', arg)
+            if suf:
+                idx = int(suf.group(1)) % len(axi_bundles)
+                result[arg] = axi_bundles[idx]
 
     return result

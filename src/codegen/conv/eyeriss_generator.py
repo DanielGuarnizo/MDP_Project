@@ -419,23 +419,6 @@ def _emit_top_signature(input_ports: int, weight_ports: int, output_ports: int) 
     return "void top_level(" + ", ".join(args) + ")"
 
 
-def _emit_out_store_switch_fixed(output_port_expr: str, n_out: int, output_ports: int,
-                                  folding_depth: int, dram_offset_expr: str,
-                                  val_expr: str, indent: str) -> str:
-    s = []
-    if folding_depth == 1:
-        s.append(f"{indent}switch({output_port_expr}) {{")
-        for i in range(n_out):
-            s.append(f"{indent}  case {i}: dram_output_p{i}[{dram_offset_expr}] = {val_expr}; break;")
-    else:
-        s.append(f"{indent}int output_port_index = {output_port_expr} % {output_ports};")
-        s.append(f"{indent}int safe_dram_offset = {dram_offset_expr} * {folding_depth} + {output_port_expr} / {output_ports};")
-        s.append(f"{indent}switch(output_port_index) {{")
-        for i in range(output_ports):
-            s.append(f"{indent}  case {i}: dram_output_p{i}[safe_dram_offset] = {val_expr}; break;")
-    s.append(f"{indent}  default: break;")
-    s.append(f"{indent}}}")
-    return "\n".join(s)
 
 
 # =========================
@@ -907,35 +890,42 @@ def _emit_reduction_tree_block(ctx: _SACtx, indent: str) -> List[str]:
 
 
 def _emit_writeback_block(ctx: _SACtx, unroll: bool, indent: str) -> List[str]:
-    """Write reduced/accumulated values to output DRAM ports."""
+    """Write reduced/accumulated values to output DRAM ports — explicit writes, no switch."""
     spec = ctx.spec; lvars = ctx.lvars
     out_loop_vars_f = [(v, f) for v, (dm, f, _) in zip(lvars, spec.all_dims) if dm in {'M', 'P', 'Q'}]
-    bank_expr = _mixed_radix(out_loop_vars_f)
     cm_expr   = f"{ctx.outer_m_var}" if ctx.outer_m_var else "0"
     cp_expr   = f"{ctx.outer_p_var}" if ctx.outer_p_var else "0"
     cq_expr   = f"{ctx.outer_q_var}" if ctx.outer_q_var else "0"
-    pragma    = "unroll" if unroll else "nounroll"
-    val_expr  = f"reduced_output{''.join(f'[{v}]' for v, _ in out_loop_vars_f)}" if unroll else f"accumulator[{bank_expr}]"
 
-    lines = [f"{indent}// OutRegister: write accumulator to output DRAM ports"]
-    wb = indent
-    for (var, fac), (dim, _, _) in zip(out_loop_vars_f, spec.out_dims):
-        lines += [f"{wb}#pragma GCC {pragma} {fac}", f"{wb}for (int {var} = 0; {var} < {fac}; ++{var}) {{"]
-        wb += "  "
-    lines += [
-        f"{wb}int output_bank = {bank_expr};",
-        f"{wb}int output_filter_tile = {cm_expr};",
-        f"{wb}int output_row_tile = {cp_expr};",
-        f"{wb}int output_col_tile = {cq_expr};",
-        f"{wb}int output_dram_offset = (output_filter_tile * Ptiles + output_row_tile) * Qtiles + output_col_tile;",
-        f"{wb}DTYPE output_value = {val_expr};",
-        _emit_out_store_switch_fixed(
-            "output_bank", ctx.n_out, ctx.output_ports, ctx.folding_depth,
-            "output_dram_offset", "output_value", wb
-        ),
+    factors       = [f for _, f in out_loop_vars_f]
+    output_ports  = ctx.output_ports
+    folding_depth = ctx.folding_depth
+
+    lines = [
+        f"{indent}// OutRegister: write {ctx.n_out} outputs to {output_ports} port(s), folding={folding_depth}",
+        f"{indent}int output_filter_tile = {cm_expr};",
+        f"{indent}int output_row_tile = {cp_expr};",
+        f"{indent}int output_col_tile = {cq_expr};",
+        f"{indent}int output_dram_offset = (output_filter_tile * Ptiles + output_row_tile) * Qtiles + output_col_tile;",
     ]
-    for _ in out_loop_vars_f:
-        wb = wb[:-2]; lines.append(f"{wb}}}")
+
+    for combo in iprod(*[range(f) for f in factors]):
+        bank = 0
+        for i, idx in enumerate(combo):
+            stride = 1
+            for j in range(i + 1, len(factors)):
+                stride *= factors[j]
+            bank += idx * stride
+
+        port        = bank % output_ports
+        fold_offset = bank // output_ports
+
+        val  = f"reduced_output{''.join(f'[{idx}]' for idx in combo)}" if unroll else f"accumulator[{bank}]"
+        addr = "output_dram_offset" if folding_depth == 1 \
+               else f"output_dram_offset * {folding_depth} + {fold_offset}"
+
+        lines.append(f"{indent}dram_output_p{port}[{addr}] = {val};")
+
     return lines
 
 

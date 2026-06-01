@@ -32,9 +32,9 @@ def gen_wrapper_v(iface: Interface) -> str:
     scalar_wire_block = "\n".join(
         f"  wire [31:0] {arg};" for arg in iface.scalar_args
     )
-    translator_arg_conns = "\n".join(
-        f"    .{arg}({arg})," for arg in iface.scalar_args
-    )
+    # Last port has no trailing comma (Verilog requires no comma before ')' )
+    translator_args = [f"    .{arg}({arg})" for arg in iface.scalar_args]
+    translator_arg_conns = ",\n".join(translator_args)
     core_scalar_block = "\n".join(
         f"    .{arg}({arg})," for arg in iface.scalar_args
     )
@@ -91,7 +91,6 @@ module panda (
     .s_axi_control_RRESP(s_axi_control_RRESP),
     .s_axi_control_RVALID(s_axi_control_RVALID),
 {translator_arg_conns}
-    .ap_start(ap_start_lvl)
   );
 
   // Bambu core (top_level.v — unmodified)

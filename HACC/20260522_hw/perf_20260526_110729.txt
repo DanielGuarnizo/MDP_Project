@@ -1,0 +1,43 @@
+
+================================================================
+  PERFORMANCE ANALYSIS — 20260522_hw
+  2026-05-26 11:07:30
+================================================================
+
+--- Execution Time (host wall-clock) --------------------------------
+  CPU->FPGA transfer  : 18.616 ms
+  Kernel execution    : 0.275 ms        <- host stopwatch
+  FPGA->CPU transfer  : 26.114 ms
+  Total (steps 4-7)   : 45.005 ms
+
+--- Clock Cycles (wall-clock derived) --------------------------------
+  Target clock        : 300 MHz  (assumed in harness)
+  Kernel cycles @300  : ~82404    <- kernel_ms x 300,000 (may be wrong if throttled)
+
+--- Actual Clock (from Vivado timing report) -------------------------
+  Target period       : 3.333 ns  (300 MHz)
+  WNS                 : -3.144 ns
+  Actual freq         : 154.4 MHz   <- 1000/(period-WNS), throttled at runtime
+  Kernel cycles (real): ~42460   <- kernel_ms x actual_freq x 1000
+  Source              : impl_1_hw_bb_locked_timing_summary_postroute_physopted.rpt
+
+--- Hardware APM Counters ------------------------------------------
+  N/A — profile_summary.csv not found.
+  Rebuild with --profile_kernel data:all:all:all and xrt.ini present.
+
+--- Resource Utilization -------------------------------------------
+  CLB LUTs            : 186486 / 1303680  (14.30%)
+  CLB Registers       : 230330 / 2607360  (8.83%)
+  RAMB36              : 195 / 2016  (9.67%)
+  DSPs                : 196 / 9024  (2.17%)
+  Source              : impl_1_full_util_routed.rpt
+
+--- Power (Vivado estimated, post-route) ---------------------------
+  Total On-Chip       : N/A W
+  Dynamic             : N/A W
+  Static              : N/A W
+  Source              : impl_1_power_routed.rpt not found under /Users/danielguarnizo/workspace/Master/MDP/HACC/20260522_hw
+
+================================================================
+  Report saved: /Users/danielguarnizo/workspace/Master/MDP/HACC/20260522_hw/perf_20260526_110729.txt
+================================================================

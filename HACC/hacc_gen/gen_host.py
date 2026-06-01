@@ -12,8 +12,12 @@ def gen_harness_cpp() -> str:
 //
 // For every "input"/"inout" buffer:  reads <input_dir>/<name>.bin -> FPGA HBM
 // For every "output"/"inout" buffer: FPGA HBM -> writes <output_dir>/<name>.bin
+//
+// [perf] lines printed at end: CPU->FPGA, kernel, FPGA->CPU times + estimated cycles
 
 #include <cassert>
+#include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -25,6 +29,9 @@ def gen_harness_cpp() -> str:
 #include <xrt/xrt_bo.h>
 #include <xrt/xrt_device.h>
 #include <xrt/xrt_kernel.h>
+
+using hrc  = std::chrono::high_resolution_clock;
+using ms_d = std::chrono::duration<double, std::milli>;
 
 namespace fs = std::filesystem;
 
@@ -164,6 +171,7 @@ int main(int argc, char* argv[]) {
 
     // 4. Transfer inputs CPU → FPGA HBM
     std::cout << "[4] CPU -> FPGA\n";
+    auto t_h2f_start = hrc::now();
     for (size_t i = 0; i < cfg.buffers.size(); ++i) {
         const auto& bc = cfg.buffers[i];
         if (bc.direction == "input" || bc.direction == "inout") {
@@ -172,6 +180,7 @@ int main(int argc, char* argv[]) {
             bos[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
         }
     }
+    auto t_kernel_start = hrc::now();
 
     // 5. Run kernel
     std::cout << "[5] Running kernel '" << cfg.kernel_name << "'\n";
@@ -180,6 +189,7 @@ int main(int argc, char* argv[]) {
         run.set_arg(cfg.buffers[i].group_id, bos[i]);
     run.start();
     run.wait();
+    auto t_kernel_end = hrc::now();
     std::cout << "[6] Kernel done\n";
 
     // 6. Transfer outputs FPGA HBM → CPU
@@ -193,8 +203,22 @@ int main(int argc, char* argv[]) {
             write_bin(out_dir + "/" + bc.name + ".bin", out.data(), bc.size_bytes);
         }
     }
+    auto t_f2h_end = hrc::now();
 
     std::cout << "[8] Done.\n";
+
+    // Performance summary
+    double h2f_ms   = ms_d(t_kernel_start - t_h2f_start).count();
+    double kern_ms  = ms_d(t_kernel_end   - t_kernel_start).count();
+    double f2h_ms   = ms_d(t_f2h_end      - t_kernel_end).count();
+    double total_ms = ms_d(t_f2h_end      - t_h2f_start).count();
+    long long cycles = static_cast<long long>(kern_ms * 300000.0);  // 300 MHz platform clock
+    std::printf("\n[perf] CPU->FPGA transfer : %8.3f ms\n", h2f_ms);
+    std::printf("[perf] Kernel execution   : %8.3f ms\n", kern_ms);
+    std::printf("[perf] FPGA->CPU transfer : %8.3f ms\n", f2h_ms);
+    std::printf("[perf] Total (steps 4-7)  : %8.3f ms\n", total_ms);
+    std::printf("[perf] Est. kernel cycles : %lld  (@ 300 MHz)\n", cycles);
+
     return 0;
 }
 """

@@ -189,53 +189,39 @@ void top_level(DTYPE *dram_input_p0, DTYPE *dram_input_p1, DTYPE *dram_weight_p0
               }  // sacols_0 (reduction)
             }  // sarows_2 (reduction)
 
-            // OutRegister: write accumulator to output DRAM ports
-            #pragma GCC unroll 2
-            for (int sarows_2 = 0; sarows_2 < 2; ++sarows_2) {
-              #pragma GCC unroll 7
-              for (int sacols_0 = 0; sacols_0 < 7; ++sacols_0) {
-                #pragma GCC unroll 2
-                for (int sacols_1 = 0; sacols_1 < 2; ++sacols_1) {
-                  int output_bank = sarows_2*14 + sacols_0*2 + sacols_1;
-                  int output_filter_tile = outregister_0;
-                  int output_row_tile = globalbuffer_1;
-                  int output_col_tile = (dram_0 * 4 + globalbuffer_0);
-                  int output_dram_offset = (output_filter_tile * Ptiles + output_row_tile) * Qtiles + output_col_tile;
-                  DTYPE output_value = reduced_output[sarows_2][sacols_0][sacols_1];
-                  switch(output_bank) {
-                    case 0: dram_output_p0[output_dram_offset] = output_value; break;
-                    case 1: dram_output_p1[output_dram_offset] = output_value; break;
-                    case 2: dram_output_p2[output_dram_offset] = output_value; break;
-                    case 3: dram_output_p3[output_dram_offset] = output_value; break;
-                    case 4: dram_output_p4[output_dram_offset] = output_value; break;
-                    case 5: dram_output_p5[output_dram_offset] = output_value; break;
-                    case 6: dram_output_p6[output_dram_offset] = output_value; break;
-                    case 7: dram_output_p7[output_dram_offset] = output_value; break;
-                    case 8: dram_output_p8[output_dram_offset] = output_value; break;
-                    case 9: dram_output_p9[output_dram_offset] = output_value; break;
-                    case 10: dram_output_p10[output_dram_offset] = output_value; break;
-                    case 11: dram_output_p11[output_dram_offset] = output_value; break;
-                    case 12: dram_output_p12[output_dram_offset] = output_value; break;
-                    case 13: dram_output_p13[output_dram_offset] = output_value; break;
-                    case 14: dram_output_p14[output_dram_offset] = output_value; break;
-                    case 15: dram_output_p15[output_dram_offset] = output_value; break;
-                    case 16: dram_output_p16[output_dram_offset] = output_value; break;
-                    case 17: dram_output_p17[output_dram_offset] = output_value; break;
-                    case 18: dram_output_p18[output_dram_offset] = output_value; break;
-                    case 19: dram_output_p19[output_dram_offset] = output_value; break;
-                    case 20: dram_output_p20[output_dram_offset] = output_value; break;
-                    case 21: dram_output_p21[output_dram_offset] = output_value; break;
-                    case 22: dram_output_p22[output_dram_offset] = output_value; break;
-                    case 23: dram_output_p23[output_dram_offset] = output_value; break;
-                    case 24: dram_output_p24[output_dram_offset] = output_value; break;
-                    case 25: dram_output_p25[output_dram_offset] = output_value; break;
-                    case 26: dram_output_p26[output_dram_offset] = output_value; break;
-                    case 27: dram_output_p27[output_dram_offset] = output_value; break;
-                    default: break;
-                  }
-                }
-              }
-            }
+            // OutRegister: write 28 outputs to 28 port(s), folding=1
+            int output_filter_tile = outregister_0;
+            int output_row_tile = globalbuffer_1;
+            int output_col_tile = (dram_0 * 4 + globalbuffer_0);
+            int output_dram_offset = (output_filter_tile * Ptiles + output_row_tile) * Qtiles + output_col_tile;
+            dram_output_p0[output_dram_offset] = reduced_output[0][0][0];
+            dram_output_p1[output_dram_offset] = reduced_output[0][0][1];
+            dram_output_p2[output_dram_offset] = reduced_output[0][1][0];
+            dram_output_p3[output_dram_offset] = reduced_output[0][1][1];
+            dram_output_p4[output_dram_offset] = reduced_output[0][2][0];
+            dram_output_p5[output_dram_offset] = reduced_output[0][2][1];
+            dram_output_p6[output_dram_offset] = reduced_output[0][3][0];
+            dram_output_p7[output_dram_offset] = reduced_output[0][3][1];
+            dram_output_p8[output_dram_offset] = reduced_output[0][4][0];
+            dram_output_p9[output_dram_offset] = reduced_output[0][4][1];
+            dram_output_p10[output_dram_offset] = reduced_output[0][5][0];
+            dram_output_p11[output_dram_offset] = reduced_output[0][5][1];
+            dram_output_p12[output_dram_offset] = reduced_output[0][6][0];
+            dram_output_p13[output_dram_offset] = reduced_output[0][6][1];
+            dram_output_p14[output_dram_offset] = reduced_output[1][0][0];
+            dram_output_p15[output_dram_offset] = reduced_output[1][0][1];
+            dram_output_p16[output_dram_offset] = reduced_output[1][1][0];
+            dram_output_p17[output_dram_offset] = reduced_output[1][1][1];
+            dram_output_p18[output_dram_offset] = reduced_output[1][2][0];
+            dram_output_p19[output_dram_offset] = reduced_output[1][2][1];
+            dram_output_p20[output_dram_offset] = reduced_output[1][3][0];
+            dram_output_p21[output_dram_offset] = reduced_output[1][3][1];
+            dram_output_p22[output_dram_offset] = reduced_output[1][4][0];
+            dram_output_p23[output_dram_offset] = reduced_output[1][4][1];
+            dram_output_p24[output_dram_offset] = reduced_output[1][5][0];
+            dram_output_p25[output_dram_offset] = reduced_output[1][5][1];
+            dram_output_p26[output_dram_offset] = reduced_output[1][6][0];
+            dram_output_p27[output_dram_offset] = reduced_output[1][6][1];
           }  // outregister_0
         }  // globalbuffer_1
       }  // globalbuffer_0

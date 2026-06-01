@@ -133,7 +133,32 @@
       "Bash(tee /tmp/bambu_n168_full.log)",
       "Bash(echo \"EXIT: $?\")",
       "Bash(sort -k5 -rh)",
-      "Read(//private/tmp/hacc_test_conv/**)"
+      "Read(//private/tmp/hacc_test_conv/**)",
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "Read(//private/tmp/hacc_test_gen/src/**)",
+      "Read(//private/tmp/hacc_test_gen/**)",
+      "Bash(awk '{printf \"%-8s  %s\\\\n\", $5, $NF}')",
+      "Read(//private/tmp/hacc_test_new/**)",
+      "Bash(cat)",
+      "Read(//private/tmp/hacc_perf_test/**)",
+      "Bash(bash performance_analysis.sh /tmp/mock_run.log)",
+      "Bash(bash /tmp/hacc_perf_test/performance_analysis.sh)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(/tmp/hacc_perf_test/performance_analysis.sh)",
+      "Bash(bash -n deploy_and_run.sh)",
+      "Bash(bash *)",
+      "Bash(awk '/^hostname / {print $2} /^user / {print $2}')",
+      "Bash(ping -c1 -W2 hacc-build-01.inf.ethz.ch)",
+      "Bash(ping -c1 -W3 hacc-build-01.inf.ethz.ch)",
+      "Bash(ssh-add *)",
+      "Bash(xargs rm -f)",
+      "Bash(rm -f 20260525_093034/run.log 20260525_093034/perf_*.txt)",
+      "Bash(xargs -I{} echo \"{} .rpt files fetched\")",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(ssh-keygen *)",
+      "Bash(kill %1)",
+      "Bash(ssh-copy-id *)"
     ]
   }
 }

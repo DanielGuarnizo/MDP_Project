@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .gen_config import gen_accel_config
 from .gen_host import gen_cmake, gen_harness_cpp, gen_user_config_cmake
-from .gen_tcl import gen_script_to_xo, gen_xo_to_xclbin
+from .gen_tcl import gen_build_all_sh, gen_script_to_xo, gen_xo_to_xclbin
 from .gen_translator import gen_translator_v
 from .gen_wrapper import gen_wrapper_v
 from .models import infer_direction
@@ -38,8 +38,12 @@ def main() -> None:
     p.add_argument('--verilog',  required=True, help='Bambu top_level.v path')
     p.add_argument('--output',   default=None,  help='Output dir (default: HACC/<timestamp>/)')
     p.add_argument('--platform', default='xilinx_u55c_gen3x16_xdma_3_202210_1')
-    p.add_argument('--target',   default='hw_emu', choices=['hw_emu', 'hw'])
+    p.add_argument('--target',   default='hw',     choices=['hw_emu', 'hw'])
     p.add_argument('--hbm-bank', default='HBM[0]')
+    p.add_argument('--workload', default=None, choices=['conv', 'gemm'],
+                   help='Workload type (enables workload section in accel_config.json)')
+    p.add_argument('--dims',     default=None, nargs='+', type=int,
+                   help='Workload dims: M P Q C R S (conv) or M K N (gemm)')
     args = p.parse_args()
 
     if args.output is None:
@@ -91,7 +95,7 @@ def main() -> None:
     xo_sh.chmod(0o755)
     print("Generated xo_to_xclbin.sh")
 
-    cfg = gen_accel_config(iface)
+    cfg = gen_accel_config(iface, args.workload, args.dims)
     (out / 'accel_config.json').write_text(json.dumps(cfg, indent=2))
     print("Generated accel_config.json")
 
@@ -100,6 +104,15 @@ def main() -> None:
     (host / 'UserConfig.cmake').write_text(gen_user_config_cmake())
     (host_inc / '.gitkeep').touch()
     print("Generated host/ (CMakeLists.txt, UserConfig.cmake, src/harness.cpp)")
+
+    build_sh = out / 'build_all.sh'
+    build_sh.write_text(gen_build_all_sh())
+    build_sh.chmod(0o755)
+    print("Generated build_all.sh")
+
+    shutil.copy(Path(__file__).parent.parent / 'lib' / 'xrt.ini',        out / 'xrt.ini')
+    shutil.copy(Path(__file__).parent.parent / 'lib' / 'post_route.tcl', out / 'post_route.tcl')
+    print("Copied xrt.ini + post_route.tcl")
 
     print(f"""
 {'═'*60}
@@ -112,21 +125,25 @@ Output folder: {out}
     panda_wrapper.v        ← Vitis top module (kernel: panda)
   script_to_xo.tcl
   xo_to_xclbin.sh
+  build_all.sh
   accel_config.json
   host/src/harness.cpp
 
 Build steps:
   1. vivado -mode batch -source {out}/script_to_xo.tcl
   2. bash {out}/xo_to_xclbin.sh
-  3. cmake -S {out}/host -B {out}/host/build
-     cmake --build {out}/host/build -j
+  3. cmake -S {out}/host -B {out}/build/host
+     cmake --build {out}/build/host -j
 
-Run (hw emulation):
-  export XCL_EMULATION_MODE=hw_emu
+Run (on alveo node):
   export LD_LIBRARY_PATH=/opt/xilinx/xrt/lib:$LD_LIBRARY_PATH
-  {out}/host/build/bambu_application \\
+  {out}/build/host/bambu_application \\
       {out}/xo/panda.xclbin \\
       {out}/accel_config.json \\
       <input_dir> \\
       <output_dir>
+
+Automate full pipeline from local machine:
+  bash deploy_and_run.sh build {out}
+  bash deploy_and_run.sh run   {out} <alveo_host> <input_data_dir>
 {'═'*60}""")

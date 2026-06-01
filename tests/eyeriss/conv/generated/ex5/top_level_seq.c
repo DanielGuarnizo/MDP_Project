@@ -84,30 +84,19 @@ void top_level(DTYPE *dram_input_p0, DTYPE *dram_input_p1, DTYPE *dram_weight_p0
             }  // wregister_1
           }  // wregister_0
 
-          // OutRegister: write accumulator to output DRAM ports
-          #pragma GCC nounroll 2
-          for (int sacols_0 = 0; sacols_0 < 2; ++sacols_0) {
-            #pragma GCC nounroll 4
-            for (int sacols_1 = 0; sacols_1 < 4; ++sacols_1) {
-              int output_bank = sacols_0*4 + sacols_1;
-              int output_filter_tile = outregister_0;
-              int output_row_tile = globalbuffer_0;
-              int output_col_tile = dram_0;
-              int output_dram_offset = (output_filter_tile * Ptiles + output_row_tile) * Qtiles + output_col_tile;
-              DTYPE output_value = accumulator[sacols_0*4 + sacols_1];
-              switch(output_bank) {
-                case 0: dram_output_p0[output_dram_offset] = output_value; break;
-                case 1: dram_output_p1[output_dram_offset] = output_value; break;
-                case 2: dram_output_p2[output_dram_offset] = output_value; break;
-                case 3: dram_output_p3[output_dram_offset] = output_value; break;
-                case 4: dram_output_p4[output_dram_offset] = output_value; break;
-                case 5: dram_output_p5[output_dram_offset] = output_value; break;
-                case 6: dram_output_p6[output_dram_offset] = output_value; break;
-                case 7: dram_output_p7[output_dram_offset] = output_value; break;
-                default: break;
-              }
-            }
-          }
+          // OutRegister: write 8 outputs to 8 port(s), folding=1
+          int output_filter_tile = outregister_0;
+          int output_row_tile = globalbuffer_0;
+          int output_col_tile = dram_0;
+          int output_dram_offset = (output_filter_tile * Ptiles + output_row_tile) * Qtiles + output_col_tile;
+          dram_output_p0[output_dram_offset] = accumulator[0];
+          dram_output_p1[output_dram_offset] = accumulator[1];
+          dram_output_p2[output_dram_offset] = accumulator[2];
+          dram_output_p3[output_dram_offset] = accumulator[3];
+          dram_output_p4[output_dram_offset] = accumulator[4];
+          dram_output_p5[output_dram_offset] = accumulator[5];
+          dram_output_p6[output_dram_offset] = accumulator[6];
+          dram_output_p7[output_dram_offset] = accumulator[7];
         }  // outregister_0
       }  // globalbuffer_0
     }  // dram_0

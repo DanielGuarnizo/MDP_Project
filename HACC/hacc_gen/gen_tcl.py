@@ -40,9 +40,9 @@ def gen_script_to_xo(iface: Interface) -> str:
 # Run: vivado -mode batch -source script_to_xo.tcl
 
 set SCRIPT_DIR [file dirname [file normalize [info script]]]
-set PROJ_DIR   [file normalize [file join $SCRIPT_DIR "build" "project"]]
+set PROJ_DIR   [file normalize [file join $SCRIPT_DIR "build" "vivado"]]
 set SRC_DIR    [file normalize [file join $SCRIPT_DIR "src"]]
-set IP_ROOT    [file normalize [file join $SCRIPT_DIR "ip_pkg"]]
+set IP_ROOT    [file normalize [file join $SCRIPT_DIR "build" "ip"]]
 set XO_DIR     [file normalize [file join $SCRIPT_DIR "xo"]]
 
 file mkdir $PROJ_DIR
@@ -114,7 +114,7 @@ ipx::save_core $core
 
 # Create XO
 set XO_PATH [file join $XO_DIR "panda.xo"]
-package_xo -xo_path $XO_PATH \\
+package_xo -force -xo_path $XO_PATH \\
   -kernel_name panda \\
   -ip_directory $IP_ROOT \\
   -ctrl_protocol ap_ctrl_hs
@@ -123,21 +123,94 @@ puts "\\nDone: $XO_PATH"
 """
 
 
+def gen_build_all_sh() -> str:
+    return """\
+#!/usr/bin/env bash
+# build_all.sh — full build pipeline on hacc-build-01
+# Run inside a tmux session: tmux new-session -d -s hacc_build 'bash build_all.sh; echo EXIT=$?; read'
+set -eo pipefail
+
+DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG="$DEPLOY_DIR/build_all.log"
+exec &> >(tee -a "$LOG")
+echo "=== BUILD START $(date) ==="
+
+# Unset vars that Xilinx scripts expect to exist
+export PYTHONPATH="${PYTHONPATH:-}"
+export PYTHONHOME="${PYTHONHOME:-}"
+
+# Vivado + Vitis environment
+source /tools/Xilinx/Vivado/2024.2/settings64.sh
+source /tools/Xilinx/Vitis/2024.2/settings64.sh
+
+# XRT: setup.sh rejects paths not ending in /xrt, so set manually
+export XILINX_XRT=/opt/xilinx/xrt_2024.2
+export LD_LIBRARY_PATH=$XILINX_XRT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+export PATH=$XILINX_XRT/bin${PATH:+:$PATH}
+export PYTHONPATH=$XILINX_XRT/python${PYTHONPATH:+:$PYTHONPATH}
+
+echo "=== [1/3] Vivado: .v -> .xo (~10 min) ==="
+cd "$DEPLOY_DIR"
+vivado -mode batch -source script_to_xo.tcl
+echo "=== .xo: $(ls -lh xo/panda.xo) ==="
+
+echo "=== [2/3] v++: .xo -> .xclbin (edit -t flag for hw vs hw_emu, hw takes 4-8h) ==="
+bash xo_to_xclbin.sh
+echo "=== .xclbin: $(ls -lh xo/panda.xclbin) ==="
+
+echo "=== [3/3] Host application ==="
+cmake -S "$DEPLOY_DIR/host" -B "$DEPLOY_DIR/build/host"
+cmake --build "$DEPLOY_DIR/build/host" -j$(nproc)
+echo "=== Done: $(ls -lh $DEPLOY_DIR/build/host/bambu_application) ==="
+
+echo "=== BUILD COMPLETE $(date) ==="
+"""
+
+
 def gen_xo_to_xclbin(iface: Interface, platform: str, target: str, hbm_bank: str) -> str:
+    import re as _re
+    # Spread each AXI master across sequential even HBM banks to reduce routing congestion.
+    # e.g. HBM[0] base → gmem_0:HBM[0], gmem_1:HBM[2], gmem_2:HBM[4], ...
+    _m = _re.match(r'HBM\[(\d+)\]', hbm_bank)
+    if _m and len(iface.axi_bundles) > 1:
+        _base = int(_m.group(1))
+        _banks = [f"HBM[{_base + i}]" for i in range(len(iface.axi_bundles))]
+    else:
+        _banks = [hbm_bank] * len(iface.axi_bundles)
     sp_lines = " \\\n".join(
-        f"  --connectivity.sp panda_1.{b}:{hbm_bank}" for b in iface.axi_bundles
+        f"  --connectivity.sp panda_1.{b}:{_banks[i]}"
+        for i, b in enumerate(iface.axi_bundles)
     )
+    # For hw: routing directives + post-route power report hook.
+    # NOTE: --profile_kernel flags cause routing failure on large designs (n=96 PE)
+    # by exhausting routing resources with APM monitor insertion. Removed permanently.
+    # Power is obtained via post_route.tcl (report_power after ROUTE_DESIGN).
+    hw_opts_lines = []
+    if target == "hw":
+        hw_opts_lines = [
+            "  --vivado.prop run.impl_1.STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE=AggressiveExplore \\",
+            "  --vivado.prop run.impl_1.STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED=true \\",
+            '  --vivado.prop run.impl_1.STEPS.ROUTE_DESIGN.TCL.POST="${SCRIPT_DIR}/post_route.tcl" \\',
+        ]
+    hw_opts = ("\n" + "\n".join(hw_opts_lines)) if hw_opts_lines else ""
     return f"""\
 #!/usr/bin/env bash
 # xo_to_xclbin.sh — links panda.xo into a .xclbin
 # Run: bash xo_to_xclbin.sh
-# Edit -t to switch between hw_emu and hw
+set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
+
+mkdir -p "${{SCRIPT_DIR}}/build/vpp/logs" \
+         "${{SCRIPT_DIR}}/build/vpp/tmp" \
+         "${{SCRIPT_DIR}}/build/vpp/reports"
 
 v++ -t {target} \\
   --platform {platform} \\
   --link "${{SCRIPT_DIR}}/xo/panda.xo" \\
+  --log_dir    "${{SCRIPT_DIR}}/build/vpp/logs" \\
+  --temp_dir   "${{SCRIPT_DIR}}/build/vpp/tmp" \\
+  --report_dir "${{SCRIPT_DIR}}/build/vpp/reports" \\{hw_opts}
 {sp_lines} \\
   -o "${{SCRIPT_DIR}}/xo/panda.xclbin"
 

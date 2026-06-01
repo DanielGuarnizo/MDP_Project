@@ -12,23 +12,27 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CONV_DIR="$REPO_ROOT/experiments/eyeriss/conv"
+# CONV_DIR="$REPO_ROOT/experiments/eyeriss/conv"
+CONV_DIR="$REPO_ROOT/tests/eyeriss/conv/generated"
 
 # N_mul sweep per experiment (powers of 2 from 1 to U, plus U if not power of 2)
 declare -A SWEEP
-SWEEP[ex1]="1 2 4 8 16 32 64 96 97"   # U=96
-SWEEP[ex2]="1 2 4 8 16 32 64 96 97"   # U=96
-SWEEP[ex3]="1 2 4 8 16 32 64 72 73"   # U=72
-SWEEP[ex4]="1 2 4 8 16 32 64 65"      # U=64
-SWEEP[ex5]="1 2 4 8 16 32 64 80 81"   # U=80
-SWEEP[ex6]="1 2 4 8 16 32 64 96 97"   # U=96
+# SWEEP[ex1]="1 2 4 8 16 32 64 96 97"   # U=96
+# SWEEP[ex2]="1 2 4 8 16 32 64 96 97"   # U=96
+# SWEEP[ex3]="1 2 4 8 16 32 64 72 73"   # U=72
+# SWEEP[ex4]="1 2 4 8 16 32 64 65"      # U=64
+# SWEEP[ex5]="1 2 4 8 16 32 64 80 81"   # U=80
+# SWEEP[ex6]="1 2 4 8 16 32 64 96 97"   # U=96
 # SWEEP[ex8]="1 2 4 8 16 32 64 96 97"
 # SWEEP[ex9]="1 2 4 8 16 32 64 96 97"
 # SWEEP[ex10]="1 2 4 8 16 32 64 96 97"
+SWEEP[ex1_1]="1 2 4 8 16 32 64 96"
+SWEEP[ex1_2]="1 2 4 8 16 32 64 96"
+
 # If experiments passed as args, use those; else run all
 # EXPERIMENTS=("${@:-ex1 ex2 ex3 ex4 ex5 ex6}")
 # EXPERIMENTS=("${@:-ex1 ex2 ex3 ex4 ex5 ex6 ex8 ex9 ex10}")
-EXPERIMENTS=("${@:-ex1 ex2 ex3 ex4 ex5 ex6}")
+EXPERIMENTS=("${@:-ex1_1 ex1_2}")
 if [[ ${#EXPERIMENTS[@]} -eq 1 && "${EXPERIMENTS[0]}" == *" "* ]]; then
   read -ra EXPERIMENTS <<< "${EXPERIMENTS[0]}"
 fi
@@ -55,7 +59,7 @@ for EX in "${EXPERIMENTS[@]}"; do
   echo "════════════════════════════════════════════════════════"
 
   for N_MUL in ${SWEEP[$EX]}; do
-    LOG="$EXP_DIR/Bambu_outputs_working/sa/n${N_MUL}/bambu_sa_n${N_MUL}.log"
+    LOG="$EXP_DIR/Bambu_outputs/sa/n${N_MUL}/bambu_sa_n${N_MUL}.log"
 
     # Resume: skip if already done
     if [[ -f "$LOG" ]] && grep -q "Run 1 execution time" "$LOG"; then

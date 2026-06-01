@@ -1,0 +1,10 @@
+Compiling top_level_sa.c
+Compiling libmdpi.so
+Compiling mdpi_driver.cpp
+Compiling mdpi_wrapper.cpp
+Compiling testbench testbench_common.c
+cc1plus: warning: command line option ‘-Wno-implicit-function-declaration’ is valid for C/ObjC but not for C++
+cc1plus: warning: command line option ‘-Wno-int-conversion’ is valid for C/ObjC but not for C++
+cc1plus: warning: unrecognized command line option ‘-Wno-incompatible-function-pointer-types’
+Linking testbench
+Linking libmdpi_driver.so

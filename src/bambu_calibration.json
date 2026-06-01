@@ -17,12 +17,12 @@
       "r2": 0.9999885226
     },
     "I386_GCC8|5|xcu55c-2Lfsvh2892-VVD": {
-      "note": "fitted via lstsq+P_write grid search over 7 data points (XML mode) from: ex11",
-      "alpha_acc": 2.813871,
-      "alpha_body_fixed": 1.41465561,
-      "alpha_post": 3.47665829,
-      "alpha_func": 0.0,
-      "r2": 0.9999444688
+      "note": "fitted via lstsq+P_write grid search over 9 data points (XML mode) from: ex1_1",
+      "alpha_acc": 3.0338512,
+      "alpha_body_fixed": 2.31927525,
+      "alpha_post": 0.41300877,
+      "alpha_func": 0.0046,
+      "r2": 0.9999929982
     }
   },
   "experiments": {
