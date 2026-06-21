@@ -1,7 +1,7 @@
 from .models import Interface, _port_str
 
 
-def gen_wrapper_v(iface: Interface) -> str:
+def gen_wrapper_v(iface: Interface, hw_profile: bool = False) -> str:
     static_ports = [
         "  input  ap_clk",
         "  input  ap_rst_n",
@@ -41,6 +41,93 @@ def gen_wrapper_v(iface: Interface) -> str:
     core_axi_list = [f"    .{p.name}({p.name})" for p in iface.axi_ports]
     core_axi_block = ",\n".join(core_axi_list)
 
+    # ── AXI latency performance counter Verilog (N-bundle aggregate) ──────────
+    counter_block = ""
+    translator_counter_conns = ""
+    translator_counter_sep = ""
+
+    if hw_profile:
+        bundles = iface.axi_bundles
+        N = len(bundles)
+
+        outstanding_decls = "\n".join(
+            f"  reg [3:0] rd_outstanding_{i};\n"
+            f"  reg [3:0] wr_outstanding_{i};"
+            for i in range(N)
+        )
+        rd_or = " | ".join(f"(rd_outstanding_{i} != 4'd0)" for i in range(N))
+        wr_or = " | ".join(f"(wr_outstanding_{i} != 4'd0)" for i in range(N))
+        busy_wires = (
+            f"  wire rd_any_outstanding = {rd_or};\n"
+            f"  wire wr_any_outstanding = {wr_or};"
+        )
+        per_bundle_blocks = []
+        for i, b in enumerate(bundles):
+            per_bundle_blocks.append(
+                f"  always @(posedge ap_clk) begin\n"
+                f"    if (!ap_rst_n || start_port_pulse) rd_outstanding_{i} <= 4'd0;\n"
+                f"    else if (({b}_arvalid && {b}_arready) && !({b}_rlast && {b}_rvalid && {b}_rready))\n"
+                f"      rd_outstanding_{i} <= (rd_outstanding_{i} < 4'd15) ? rd_outstanding_{i} + 4'd1 : 4'd15;\n"
+                f"    else if (!({b}_arvalid && {b}_arready) && ({b}_rlast && {b}_rvalid && {b}_rready))\n"
+                f"      rd_outstanding_{i} <= (rd_outstanding_{i} > 4'd0) ? rd_outstanding_{i} - 4'd1 : 4'd0;\n"
+                f"  end\n"
+                f"  always @(posedge ap_clk) begin\n"
+                f"    if (!ap_rst_n || start_port_pulse) wr_outstanding_{i} <= 4'd0;\n"
+                f"    else if (({b}_awvalid && {b}_awready) && !({b}_bvalid && {b}_bready))\n"
+                f"      wr_outstanding_{i} <= (wr_outstanding_{i} < 4'd15) ? wr_outstanding_{i} + 4'd1 : 4'd15;\n"
+                f"    else if (!({b}_awvalid && {b}_awready) && ({b}_bvalid && {b}_bready))\n"
+                f"      wr_outstanding_{i} <= (wr_outstanding_{i} > 4'd0) ? wr_outstanding_{i} - 4'd1 : 4'd0;\n"
+                f"  end"
+            )
+        per_bundle_block = "\n".join(per_bundle_blocks)
+        done_bits = N.bit_length()
+        zero_pad  = 32 - done_bits
+        rd_done_sum = "\n    + ".join(
+            f"({b}_rlast & {b}_rvalid & {b}_rready)" for b in bundles
+        )
+        wr_done_sum = "\n    + ".join(
+            f"({b}_bvalid & {b}_bready)" for b in bundles
+        )
+        done_wires = (
+            f"  wire [{done_bits - 1}:0] rd_done_this_cycle =\n    {rd_done_sum};\n"
+            f"  wire [{done_bits - 1}:0] wr_done_this_cycle =\n    {wr_done_sum};"
+        )
+        aggregate_block = (
+            f"  reg [63:0] rd_busy_cycles;\n"
+            f"  reg [63:0] wr_busy_cycles;\n"
+            f"  reg [31:0] rd_txn_count;\n"
+            f"  reg [31:0] wr_txn_count;\n"
+            f"\n"
+            f"  always @(posedge ap_clk) begin\n"
+            f"    if (!ap_rst_n || start_port_pulse) rd_busy_cycles <= 64'd0;\n"
+            f"    else if (rd_any_outstanding)       rd_busy_cycles <= rd_busy_cycles + 64'd1;\n"
+            f"  end\n"
+            f"  always @(posedge ap_clk) begin\n"
+            f"    if (!ap_rst_n || start_port_pulse) wr_busy_cycles <= 64'd0;\n"
+            f"    else if (wr_any_outstanding)       wr_busy_cycles <= wr_busy_cycles + 64'd1;\n"
+            f"  end\n"
+            f"  always @(posedge ap_clk) begin\n"
+            f"    if (!ap_rst_n || start_port_pulse) rd_txn_count <= 32'd0;\n"
+            f"    else rd_txn_count <= rd_txn_count + {{{zero_pad}'d0, rd_done_this_cycle}};\n"
+            f"  end\n"
+            f"  always @(posedge ap_clk) begin\n"
+            f"    if (!ap_rst_n || start_port_pulse) wr_txn_count <= 32'd0;\n"
+            f"    else wr_txn_count <= wr_txn_count + {{{zero_pad}'d0, wr_done_this_cycle}};\n"
+            f"  end"
+        )
+        counter_block = "\n".join([
+            "  // ── AXI transaction latency performance counters (N-bundle aggregate) ──",
+            outstanding_decls, busy_wires, done_wires, per_bundle_block, aggregate_block,
+        ])
+        translator_counter_conns = (
+            "    .rd_busy_cycles(rd_busy_cycles),\n"
+            "    .wr_busy_cycles(wr_busy_cycles),\n"
+            "    .rd_txn_count(rd_txn_count),\n"
+            "    .wr_txn_count(wr_txn_count)"
+        )
+        translator_counter_sep = ",\n"
+    # ── end counter block ───────────────────────────────────────────────────────
+
     return f"""\
 `timescale 1ns / 1ps
 // Vitis-compatible wrapper for Bambu top_level
@@ -66,6 +153,8 @@ module panda (
   assign ap_ready = ap_ready_r;
   assign ap_done  = sig_done;
 
+{counter_block}
+
   // AXI-Lite translator
   top_level_translator translator (
     .ap_clk(ap_clk),
@@ -90,7 +179,7 @@ module panda (
     .s_axi_control_RDATA(s_axi_control_RDATA),
     .s_axi_control_RRESP(s_axi_control_RRESP),
     .s_axi_control_RVALID(s_axi_control_RVALID),
-{translator_arg_conns}
+{translator_arg_conns}{translator_counter_sep}{translator_counter_conns}
   );
 
   // Bambu core (top_level.v — unmodified)

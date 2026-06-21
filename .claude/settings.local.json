@@ -158,7 +158,14 @@
       "Bash(echo \"EXIT=$?\")",
       "Bash(ssh-keygen *)",
       "Bash(kill %1)",
-      "Bash(ssh-copy-id *)"
+      "Bash(ssh-copy-id *)",
+      "Bash(awk '/^module top_level/{found=1} found' tests/eyeriss/conv/generated/ex1_2/Bambu_outputs/sa/n1/top_level.v)",
+      "Bash(awk '/^module top_level/{found=1} found' tests/eyeriss/conv/generated/ex1_2/Bambu_outputs/sa/n96/top_level.v)",
+      "Skill(loop)",
+      "Bash(xargs cat)",
+      "Bash(rsync -az /Users/danielguarnizo/workspace/Master/MDP/HACC/ex6_1_N_mul_96/ dguarnizo@hacc-build-01.inf.ethz.ch:~/workspace/deploy/ex6_1_N_mul_96/)",
+      "Bash(cp HACC/lib/xrt.ini HACC/ex6_1_N_mul_1_v7/xrt.ini)",
+      "Bash(cp HACC/lib/xrt.ini HACC/ex6_1_N_mul_96_v6/xrt.ini)"
     ]
   }
 }

@@ -26,7 +26,7 @@ def _infer_arch_and_workload(arch_workload: str) -> tuple[str, str | None]:
     if len(toks) < 2:
         # No workload suffix — defer inference to after dims are parsed
         return toks[0], None
-    arch = toks[0]
+    arch = "-".join(toks[:-1])
     wl = toks[-1]
     if wl == "conv":
         wl = "CONV"
@@ -117,7 +117,7 @@ def parse_ff_output(path: str) -> MappingInfo:
                 info.spatial_levels.append(lvl)
 
     # Block unsupported arch combinations
-    if info.arch not in ("eyeriss",):
+    if info.arch not in ("eyeriss", "alveo-u55c"):
         raise RuntimeError(f"Unsupported arch: {info.arch_workload!r}")
 
     return info

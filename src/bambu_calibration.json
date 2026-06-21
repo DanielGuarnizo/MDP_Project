@@ -22,7 +22,44 @@
       "alpha_body_fixed": 2.31927525,
       "alpha_post": 0.41300877,
       "alpha_func": 0.0046,
-      "r2": 0.9999929982
+      "r2": 0.9999929982,
+      "hw_measured": {
+        "note": "Hardware FPGA values at 300 MHz (3.333 ns FPGA clock). Bambu synthesis was clock=5ns. NOT transferable to clock=3.0 RTL.",
+        "alpha_acc_hw": 18.60,
+        "alpha_acc_hw_source": "ex6_1 N_mul=1 (avg ~116k cycles) vs N_mul=96 (87308 cycles): delta=31803 / delta_X_acc=1710 batches",
+        "fixed_overhead_cycles": 86973,
+        "fixed_overhead_note": "alpha_bf*X_bf + alpha_post*X_post + alpha_func lumped — cannot separate without Track 3 hw-profile data",
+        "avg_rd_latency_cycles_per_txn": 10.07,
+        "avg_wr_latency_cycles_per_txn": 25.0,
+        "rd_wr_source": "ex1_1 and ex1_2 hw-profile measurements (rd_busy/rd_txn_count)"
+      }
+    },
+    "I386_GCC8|3.0|xcu55c-2Lfsvh2892-VVD": {
+      "note": "Bambu clock=3.0ns for Alveo U55C. Simulation alphas unknown — only hw values measured so far.",
+      "alpha_acc": null,
+      "alpha_body_fixed": null,
+      "alpha_post": null,
+      "alpha_func": null,
+      "hw_measured": {
+        "note": "Hardware FPGA values at 300.030 MHz. Bambu synthesis clock=3.0ns. WNS=-0.896ns (N1) / -2.335ns (N96) — timing violations present.",
+        "alpha_acc_hw": 27.02,
+        "alpha_acc_hw_source": "ex6_1_v8: N1=116666 cycles, N96=70462 cycles; delta=46204 / delta_X_acc=1710 batches",
+        "fixed_overhead_cycles_N96": 69976,
+        "fixed_overhead_note": "C(N96) - alpha_acc*X_acc(N96) ≈ 70462 - 27.02*18; X_acc(N96)=18 from workload structure",
+        "avg_rd_latency_cycles_per_txn": 55.87,
+        "avg_wr_latency_cycles_per_txn": 28.00,
+        "rd_wr_source": "read_bm + write_bm microbenchmarks, single-bundle sequential HBM access, sweep N=1024..1M",
+        "ex6_1_N1_raw": {
+          "cycles": 116666, "rd_busy": 6110, "wr_busy": 4130,
+          "rd_txn": 720, "wr_txn": 144,
+          "avg_rd_lat": 8.5, "avg_wr_lat": 28.7
+        },
+        "ex6_1_N96_raw": {
+          "cycles": 70462, "rd_busy": 4701, "wr_busy": 3588,
+          "rd_txn": 720, "wr_txn": 144,
+          "avg_rd_lat": 6.5, "avg_wr_lat": 24.9
+        }
+      }
     }
   },
   "experiments": {
@@ -108,6 +145,18 @@
         "64": 1642,
         "96": 1504
       }
+    },
+    "ex6_1_hw": {
+      "platform": "I386_GCC8|5|xcu55c-2Lfsvh2892-VVD",
+      "note": "Real Alveo U55C FPGA measurements at 300.030 MHz. RTL synthesized with Bambu clock=5ns. WNS=-0.805ns (N_mul=1) / -1.929ns (N_mul=96). Cycle counts noisy (~7% std) due to timing violations.",
+      "hw_measured_cycles": {
+        "1": [119111, 102310, 111311],
+        "96": [87308]
+      },
+      "hw_alpha_acc": 18.60,
+      "hw_alpha_acc_note": "derived from (avg_N1 - N96) / (X_acc_N1 - X_acc_N96) = (avg~116k - 87308) / 1710",
+      "hw_fixed_overhead": 86973,
+      "hw_fixed_overhead_note": "C(N96) - alpha_acc*X_acc(N96) = 87308 - 335*1 = lumped alpha_bf+alpha_post+alpha_func"
     }
   }
 }

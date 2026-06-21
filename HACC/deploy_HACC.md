@@ -117,12 +117,17 @@ Host hacc-alveo-u55c-01
 `ForwardAgent yes` is required so that `hacc-build-01` can forward your local key when
 it `scp`s artifacts directly to the alveo node during `deploy_and_run.sh run`.
 
-### 3e. Load key into SSH agent (required each session)
+### 3e. Load key into SSH agent (required each session) Both for Alveo and Build nodes
 
 ```bash
 ssh-add ~/.ssh/id_ed25519
+ssh-copy-id hacc-build-01
+ssh-copy-id hacc-alveo-u55c-01 
 ```
-
+Also remember to install your SSH key on the newly booked node:
+```
+ ssh-copy-id -o ProxyJump=hacc-build-01 dguarnizo@hacc-alveo-u55c-01
+```
 ---
 
 ## Step 4 — Connect to the build node

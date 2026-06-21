@@ -1,0 +1,36 @@
+
+================================================================
+  PERFORMANCE ANALYSIS — ex6_1_N_mul_1_v7
+  2026-06-18 10:56:29
+================================================================
+
+--- Execution Time (host wall-clock) --------------------------------
+  CPU->FPGA transfer  : 18.216 ms    <- PCIe DMA + XRT sync
+  Kernel execution    : 0.341 ms        <- host stopwatch (includes PCIe round-trip ~0.1-0.2 ms)
+  FPGA->CPU transfer  : 79.246 ms    <- PCIe DMA + XRT sync
+  Total (steps 4-7)   : 97.803 ms
+  Kernel cycles (@300.030 MHz): 102310  <- kern_ms / clk_period (from timing report; fallback 300 MHz)
+
+--- Timing (Vivado post-route) ---------------------------------------
+  Status              : TIMING VIOLATION (design may be unreliable; FPGA clocked at 300.030 MHz)
+  Operating clock     : 300.030 MHz  (3.333 ns period from timing report)
+  WNS                 : -0.805 ns
+  Max timing-met freq : 241.7 MHz   <- 1000/(period-WNS); NOT the operating freq
+  Source              : impl_1_hw_bb_locked_timing_summary_postroute_physopted.rpt
+
+--- Resource Utilization -------------------------------------------
+  CLB LUTs            : 183975 / 1303680  (14.11%)
+  CLB Registers       : 261519 / 2607360  (10.03%)
+  RAMB36              : 197 / 2016  (9.77%)
+  DSPs                : 196 / 9024  (2.17%)
+  Source              : impl_1_full_util_routed.rpt
+
+--- Power (Vivado estimated, post-route) ---------------------------
+  Total On-Chip       : 24.427 W
+  Dynamic             : 16.314 W
+  Static              : 8.113 W
+  Source              : impl_1_power_routed.rpt
+
+================================================================
+  Report saved: /Users/danielguarnizo/workspace/Master/MDP/HACC/ex6_1_N_mul_1_v7/perf_20260618_105629.txt
+================================================================

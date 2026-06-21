@@ -1,5 +1,29 @@
-def gen_harness_cpp() -> str:
-    return r"""// harness.cpp — generic XRT host for any Bambu/HACC accelerator
+_HW_PROFILE_BLOCK = """\
+
+    // [hw-perf] Read AXI transaction latency counters from hardware registers
+    uint32_t rd_busy_lo = krnl.read_register(0x90);
+    uint32_t rd_busy_hi = krnl.read_register(0x94);
+    uint32_t wr_busy_lo = krnl.read_register(0x98);
+    uint32_t wr_busy_hi = krnl.read_register(0x9C);
+    uint32_t rd_txn_cnt = krnl.read_register(0xA0);
+    uint32_t wr_txn_cnt = krnl.read_register(0xA4);
+    uint64_t rd_busy_cyc = ((uint64_t)rd_busy_hi << 32) | rd_busy_lo;
+    uint64_t wr_busy_cyc = ((uint64_t)wr_busy_hi << 32) | wr_busy_lo;
+    double avg_rd = (rd_txn_cnt > 0) ? (double)rd_busy_cyc / rd_txn_cnt : 0.0;
+    double avg_wr = (wr_txn_cnt > 0) ? (double)wr_busy_cyc / wr_txn_cnt : 0.0;
+    std::printf("\\n[hw-perf] rd_busy_cycles : %llu\\n", (unsigned long long)rd_busy_cyc);
+    std::printf("[hw-perf] wr_busy_cycles : %llu\\n", (unsigned long long)wr_busy_cyc);
+    std::printf("[hw-perf] rd_txn_count   : %u\\n",   rd_txn_cnt);
+    std::printf("[hw-perf] wr_txn_count   : %u\\n",   wr_txn_cnt);
+    std::printf("[hw-perf] avg rd latency : %.1f cycles/txn\\n", avg_rd);
+    std::printf("[hw-perf] avg wr latency : %.1f cycles/txn\\n", avg_wr);
+"""
+
+_HW_PROFILE_INCLUDE = '#include <cstdint>\n'
+
+
+def gen_harness_cpp(hw_profile: bool = False) -> str:
+    src = r"""// harness.cpp — generic XRT host for any Bambu/HACC accelerator
 // Usage:
 //   ./bambu_application <xclbin> <accel_config.json> <input_dir> <output_dir>
 //
@@ -156,7 +180,7 @@ int main(int argc, char* argv[]) {
     std::cout << "[2] Opening device 0\n";
     auto device = xrt::device(0);
     auto uuid   = device.load_xclbin(xclbin);
-    auto krnl   = xrt::kernel(device, uuid, cfg.kernel_name);
+    auto krnl   = xrt::kernel(device, uuid, cfg.kernel_name, xrt::kernel::cu_access_mode::exclusive);
 
     // 3. Allocate buffers
     std::cout << "[3] Allocating " << cfg.buffers.size() << " buffers\n";
@@ -222,6 +246,15 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 """
+    if hw_profile:
+        src = src.replace('#include <cstring>', '#include <cstdint>\n#include <cstring>', 1)
+        src = src.replace(
+            '    std::cout << "[6] Kernel done\\n";\n\n    // 6. Transfer outputs',
+            '    std::cout << "[6] Kernel done\\n";' + _HW_PROFILE_BLOCK +
+            '\n    // 6. Transfer outputs',
+            1,
+        )
+    return src
 
 
 def gen_cmake() -> str:

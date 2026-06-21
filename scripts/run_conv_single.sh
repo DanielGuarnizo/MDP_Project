@@ -5,7 +5,7 @@
 #
 # Usage:
 #   cd /workspace
-#   bash scripts/run_conv_sweep.sh [ex1 ex2 ...]   # optional: limit to specific experiments
+#   bash scripts/run_conv_single.sh [ex1 ex2 ...]   # optional: limit to specific experiments
 #
 # Resume-safe: skips N_mul runs whose log already contains "Run 1 execution time".
 
@@ -20,13 +20,13 @@ declare -A SWEEP
 # SWEEP[ex11]="1 2 4 8 16 32 64 128 168"   # U=96
 # SWEEP[ex12]="1 2 4 8 16 32 64 128 168"
 # SWEEP[ex1]="1 2 4 8 16 32 64 96"
-SWEEP[ex4]="1 2 4 8 16 32 64 65"
+SWEEP[ex6_1]="1 96"
 
 
 # If experiments passed as args, use those; else run all
 # EXPERIMENTS=("${@:-ex1 ex2 ex3 ex4 ex5 ex6}")
 # EXPERIMENTS=("${@:-ex1 ex2 ex3 ex4 ex5 ex6 ex8 ex9 ex10}")
-EXPERIMENTS=("${@:-ex4}")
+EXPERIMENTS=("${@:-ex6_1}")
 if [[ ${#EXPERIMENTS[@]} -eq 1 && "${EXPERIMENTS[0]}" == *" "* ]]; then
   read -ra EXPERIMENTS <<< "${EXPERIMENTS[0]}"
 fi

@@ -1,0 +1,5 @@
+{
+  "kernel": "read_bm_krnl",
+  "note": "AXI latency microbenchmark \u2014 no output verification, just hw-profile counters",
+  "platform": "I386_GCC8|3.0|xcu55c-2Lfsvh2892-VVD"
+}

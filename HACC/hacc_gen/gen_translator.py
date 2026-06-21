@@ -1,13 +1,22 @@
 from .models import Interface
 
 
-def gen_translator_v(iface: Interface) -> str:
-    BASE, STEP = 0x10, 0x08
+def gen_translator_v(iface: Interface, hw_profile: bool = False) -> str:
+    BASE, STEP = 0x10, 0x04
     addr_map = {arg: BASE + i * STEP for i, arg in enumerate(iface.scalar_args)}
 
     localparam_lines = ["    ADDR_AP_CTRL = 8'h00"]
     for arg in iface.scalar_args:
         localparam_lines.append(f"    ADDR_{arg.upper()} = 8'h{addr_map[arg]:02X}")
+    if hw_profile:
+        localparam_lines += [
+            "    ADDR_RD_BUSY_LO = 8'h90",
+            "    ADDR_RD_BUSY_HI = 8'h94",
+            "    ADDR_WR_BUSY_LO = 8'h98",
+            "    ADDR_WR_BUSY_HI = 8'h9C",
+            "    ADDR_RD_TXN_CNT = 8'hA0",
+            "    ADDR_WR_TXN_CNT = 8'hA4",
+        ]
     localparam_lines += [
         "    WRIDLE  = 2'd0", "    WRDATA  = 2'd1",
         "    WRRESP  = 2'd2", "    WRRESET = 2'd3",
@@ -31,6 +40,14 @@ def gen_translator_v(iface: Interface) -> str:
         f"                ADDR_{arg.upper()}: rdata <= reg_{arg}[31:0];"
         for arg in iface.scalar_args
     )
+    counter_rdata_cases = (
+        "                ADDR_RD_BUSY_LO: rdata <= rd_busy_cycles[31:0];\n"
+        "                ADDR_RD_BUSY_HI: rdata <= rd_busy_cycles[63:32];\n"
+        "                ADDR_WR_BUSY_LO: rdata <= wr_busy_cycles[31:0];\n"
+        "                ADDR_WR_BUSY_HI: rdata <= wr_busy_cycles[63:32];\n"
+        "                ADDR_RD_TXN_CNT: rdata <= rd_txn_count[31:0];\n"
+        "                ADDR_WR_TXN_CNT: rdata <= wr_txn_count[31:0];"
+    ) if hw_profile else ""
     reg_logic = "\n\n".join(
         f"    always @(posedge ap_clk) begin\n"
         f"        if (!ap_rst_n)\n"
@@ -40,6 +57,15 @@ def gen_translator_v(iface: Interface) -> str:
         f"    end"
         for arg in iface.scalar_args
     )
+
+    counter_ports = (
+        "    // performance counter inputs (read-only, driven by panda wrapper)\n"
+        "    input  wire [63:0] rd_busy_cycles,\n"
+        "    input  wire [63:0] wr_busy_cycles,\n"
+        "    input  wire [31:0] rd_txn_count,\n"
+        "    input  wire [31:0] wr_txn_count"
+    ) if hw_profile else ""
+    counter_ports_sep = ",\n" if hw_profile else ""
 
     # These lines contain Verilog {} so we keep them as plain strings
     wmask_line = (
@@ -88,7 +114,7 @@ module top_level_translator #(
     output wire s_axi_control_RVALID,
     // kernel argument registers
 {scalar_out_ports}
-    output wire ap_start
+    output wire ap_start{counter_ports_sep}{counter_ports}
 );
 
     {localparam_block}
@@ -174,6 +200,7 @@ module top_level_translator #(
                     rdata[7] <= int_auto_restart;
                 end
 {rdata_cases}
+{counter_rdata_cases}
             endcase
         end
     end

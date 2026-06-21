@@ -117,12 +117,13 @@ else
 fi
 
 # ─── parse Vivado timing report ──────────────────────────────────────────────
-# WNS ≥ 0 → timing met;  WNS < 0 → timing violated.
-# Either way the FPGA is clocked at the target 300 MHz — a timing violation
-# means the design may be unreliable, NOT that the hardware runs slower.
-# Kernel cycles are always kern_ms × 300,000 (operating clock, not WNS-derived).
+# ACTUAL_FREQ_MHZ: implemented period of clk_kernel_00 from the timing report.
+# Used for EST_CYCLES and summary labels. Falls back to 300 MHz (platform default)
+# when no report is available. VIVADO_FREQ_MHZ (renamed to MAX_SAFE_FREQ_MHZ) is
+# the frequency at which timing would be met — NOT the operating frequency.
 
-VIVADO_FREQ_MHZ=""; VIVADO_PERIOD_NS=""; VIVADO_WNS_NS=""; TIMING_STATUS=""; TIMING_SRC=""
+ACTUAL_FREQ_MHZ="300.000"  # fallback
+MAX_SAFE_FREQ_MHZ=""; VIVADO_PERIOD_NS=""; VIVADO_WNS_NS=""; TIMING_STATUS=""; TIMING_SRC=""
 if [[ -n "$TIMING_RPT" ]]; then
     # Line 1 of clk_kernel_00: waveform + period + freq (3rd float = period in ns)
     VIVADO_PERIOD_NS="$(grep 'clk_kernel_00_unbuffered_net' "$TIMING_RPT" | head -1 \
@@ -130,17 +131,27 @@ if [[ -n "$TIMING_RPT" ]]; then
     # Line 2 of clk_kernel_00: WNS table (first float, may be negative)
     VIVADO_WNS_NS="$(grep 'clk_kernel_00_unbuffered_net' "$TIMING_RPT" | sed -n '2p' \
                      | grep -oE '[-]?[0-9]+\.[0-9]+' | head -1 || true)"
+
+    # Derive actual clock frequency from the implemented period
+    if [[ -n "$VIVADO_PERIOD_NS" ]]; then
+        ACTUAL_FREQ_MHZ="$(awk -v p="$VIVADO_PERIOD_NS" 'BEGIN{printf "%.3f", 1000/p}')"
+    fi
+
     if [[ -n "$VIVADO_PERIOD_NS" && -n "$VIVADO_WNS_NS" ]]; then
-        # max_timing_met_freq = 1000 / (period - WNS)
-        # This is the frequency at which timing would be met — NOT the operating frequency.
-        VIVADO_FREQ_MHZ="$(awk -v p="$VIVADO_PERIOD_NS" -v w="$VIVADO_WNS_NS" \
+        # max_safe_freq = 1000 / (period - WNS) — freq at which timing would be met
+        MAX_SAFE_FREQ_MHZ="$(awk -v p="$VIVADO_PERIOD_NS" -v w="$VIVADO_WNS_NS" \
                             'BEGIN{ap=p-w; if(ap>0) printf "%.1f", 1000/ap; else print "N/A"}' 2>/dev/null || true)"
-        TIMING_STATUS="$(awk -v w="$VIVADO_WNS_NS" \
-                          'BEGIN{if(w+0>=0) print "TIMING MET"; else print "TIMING VIOLATION (design may be unreliable; FPGA still clocked at 300 MHz)"}' 2>/dev/null || true)"
+        TIMING_STATUS="$(awk -v w="$VIVADO_WNS_NS" -v f="$ACTUAL_FREQ_MHZ" \
+                          'BEGIN{if(w+0>=0) print "TIMING MET"; else print "TIMING VIOLATION (design may be unreliable; FPGA clocked at " f " MHz)"}' 2>/dev/null || true)"
     fi
     TIMING_SRC="$(basename "$TIMING_RPT")"
 fi
 
+# Recalculate EST_CYCLES using actual clock period (overrides harness.cpp 300 MHz value)
+if [[ -n "$KERN_MS" && "$KERN_MS" != N/A* && -n "$VIVADO_PERIOD_NS" ]]; then
+    EST_CYCLES="$(awk -v ms="$KERN_MS" -v p="$VIVADO_PERIOD_NS" \
+                  'BEGIN{printf "%lld", ms * 1000000 / p}')"
+fi
 
 # ─── formatted summary ────────────────────────────────────────────────────────
 
@@ -156,17 +167,17 @@ cat <<SUMMARY
   Kernel execution    : ${KERN_MS} ms        <- host stopwatch (includes PCIe round-trip ~0.1-0.2 ms)
   FPGA->CPU transfer  : ${F2H_MS:-N/A} ms    <- PCIe DMA + XRT sync
   Total (steps 4-7)   : ${TOTAL_MS:-N/A} ms
-  Kernel cycles (@300MHz): ${EST_CYCLES:-N/A}  <- kern_ms x 300,000 (FPGA always clocked at 300 MHz)
+  Kernel cycles (@${ACTUAL_FREQ_MHZ} MHz): ${EST_CYCLES:-N/A}  <- kern_ms / clk_period (from timing report; fallback 300 MHz)
 
 SUMMARY
 
-if [[ -n "$VIVADO_FREQ_MHZ" ]]; then
+if [[ -n "$MAX_SAFE_FREQ_MHZ" ]]; then
     cat <<VIVSUMMARY
 --- Timing (Vivado post-route) ---------------------------------------
   Status              : ${TIMING_STATUS:-N/A}
-  Target period       : ${VIVADO_PERIOD_NS:-N/A} ns  (300 MHz operating clock)
+  Operating clock     : ${ACTUAL_FREQ_MHZ} MHz  (${VIVADO_PERIOD_NS} ns period from timing report)
   WNS                 : ${VIVADO_WNS_NS:-N/A} ns
-  Max timing-met freq : ${VIVADO_FREQ_MHZ} MHz   <- 1000/(period-WNS); NOT the operating freq
+  Max timing-met freq : ${MAX_SAFE_FREQ_MHZ} MHz   <- 1000/(period-WNS); NOT the operating freq
   Source              : ${TIMING_SRC}
 
 VIVSUMMARY

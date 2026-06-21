@@ -87,7 +87,7 @@ def _dispatch_and_generate(mapping, config, out_dir):
             elif "gemm" in aw:
                 wtype = "GEMM"
 
-    if wtype == "CONV" and arch == "eyeriss":
+    if wtype == "CONV" and arch in ("eyeriss", "alveo-u55c"):
         from codegen.conv.eyeriss_generator import generate_experiment
         generate_experiment(mapping=mapping, config=config, out_dir=out_dir)
         return

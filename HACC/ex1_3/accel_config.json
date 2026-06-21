@@ -1,0 +1,98 @@
+{
+  "kernel_name": "panda",
+  "buffers": [
+    {
+      "name": "dram_input_p0",
+      "size_bytes": 288,
+      "direction": "input",
+      "group_id": 0,
+      "axi_bundle": "m_axi_gmem_0"
+    },
+    {
+      "name": "dram_input_p1",
+      "size_bytes": 288,
+      "direction": "input",
+      "group_id": 1,
+      "axi_bundle": "m_axi_gmem_1"
+    },
+    {
+      "name": "dram_input_p2",
+      "size_bytes": 288,
+      "direction": "input",
+      "group_id": 2,
+      "axi_bundle": "m_axi_gmem_2"
+    },
+    {
+      "name": "dram_input_p3",
+      "size_bytes": 288,
+      "direction": "input",
+      "group_id": 3,
+      "axi_bundle": "m_axi_gmem_3"
+    },
+    {
+      "name": "dram_weight_p0",
+      "size_bytes": 288,
+      "direction": "inout",
+      "group_id": 4,
+      "axi_bundle": "m_axi_gmem_4"
+    },
+    {
+      "name": "dram_weight_p1",
+      "size_bytes": 288,
+      "direction": "inout",
+      "group_id": 5,
+      "axi_bundle": "m_axi_gmem_5"
+    },
+    {
+      "name": "dram_weight_p2",
+      "size_bytes": 288,
+      "direction": "inout",
+      "group_id": 6,
+      "axi_bundle": "m_axi_gmem_6"
+    },
+    {
+      "name": "dram_weight_p3",
+      "size_bytes": 288,
+      "direction": "inout",
+      "group_id": 7,
+      "axi_bundle": "m_axi_gmem_7"
+    },
+    {
+      "name": "dram_output_p0",
+      "size_bytes": 64,
+      "direction": "output",
+      "group_id": 8,
+      "axi_bundle": "m_axi_gmem_0"
+    },
+    {
+      "name": "dram_output_p1",
+      "size_bytes": 64,
+      "direction": "output",
+      "group_id": 9,
+      "axi_bundle": "m_axi_gmem_1"
+    },
+    {
+      "name": "dram_output_p2",
+      "size_bytes": 64,
+      "direction": "output",
+      "group_id": 10,
+      "axi_bundle": "m_axi_gmem_2"
+    },
+    {
+      "name": "dram_output_p3",
+      "size_bytes": 64,
+      "direction": "output",
+      "group_id": 11,
+      "axi_bundle": "m_axi_gmem_3"
+    }
+  ],
+  "workload": {
+    "type": "conv",
+    "M": 4,
+    "P": 4,
+    "Q": 4,
+    "C": 8,
+    "R": 3,
+    "S": 3
+  }
+}

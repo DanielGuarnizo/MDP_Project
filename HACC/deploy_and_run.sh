@@ -132,13 +132,6 @@ cmd_run() {
     local remote_build="~/$REMOTE_DEPLOY_BASE/$deploy_name"
     local remote_run="~/$REMOTE_RUN_BASE/$deploy_name"
 
-    # Resolve SSH alias → real user@host so build-01 can scp to alveo directly
-    local alveo_real_host alveo_real_user
-    alveo_real_host=$(ssh -G "$alveo_host" 2>/dev/null | awk '/^hostname / {print $2; exit}')
-    alveo_real_user=$(ssh -G "$alveo_host" 2>/dev/null | awk '/^user /    {print $2; exit}')
-    alveo_real_host="${alveo_real_host:-$alveo_host}"
-    local alveo_at="${alveo_real_user:+${alveo_real_user}@}${alveo_real_host}"
-
     echo "=== [run] deploy_name  : $deploy_name"
     echo "=== [run] alveo host   : $alveo_host"
     echo "=== [run] input_data   : $input_data"
@@ -154,15 +147,21 @@ cmd_run() {
     # Prepare run dir on alveo
     ssh "$alveo_host" "mkdir -p $remote_run/input_data $remote_run/output_data"
 
-    # build-01 → alveo: xclbin + binary + config (forwarded agent)
-    # Use real user@host (not local SSH alias) so build-01 can resolve the name
-    echo "--- Copying artifacts $BUILD_NODE → $alveo_at ..."
-    ssh "$BUILD_NODE" \
-        "scp -o StrictHostKeyChecking=accept-new \
-             $remote_build/xo/panda.xclbin \
-             $remote_build/build/host/bambu_application \
-             $remote_build/accel_config.json \
-             $alveo_at:$remote_run/"
+    # build-01 → local → alveo: xclbin + binary + config
+    # (build-01 cannot reach the alveo network directly — route through local)
+    local _artifacts_tmp
+    _artifacts_tmp="$(mktemp -d)"
+    trap "rm -rf '$_artifacts_tmp'" EXIT
+    echo "--- Fetching artifacts $BUILD_NODE → local (tmp) ..."
+    scp "$BUILD_NODE:$remote_build/xo/panda.xclbin" \
+        "$BUILD_NODE:$remote_build/build/host/bambu_application" \
+        "$BUILD_NODE:$remote_build/accel_config.json" \
+        "$_artifacts_tmp/"
+    echo "--- Copying artifacts local → $alveo_host ..."
+    scp "$_artifacts_tmp/panda.xclbin" \
+        "$_artifacts_tmp/bambu_application" \
+        "$_artifacts_tmp/accel_config.json" \
+        "$alveo_host:$remote_run/"
 
     # local → alveo: input_data + xrt.ini (direct, avoids double transfer via build node)
     echo "--- Copying input_data local → $alveo_host ..."
@@ -214,10 +213,15 @@ REMOTE
     echo "--- Running performance analysis locally ..."
     bash "$SCRIPT_DIR/performance_analysis.sh" "$local_dir/run.log"
 
-    # Verify locally
+    # Verify locally — prefer per-deploy verify.py (exact port table baked in)
     echo
     echo "--- Verifying outputs locally ..."
-    python3 "$SCRIPT_DIR/verify.py" "$local_dir"
+    if [[ -f "$local_dir/verify.py" ]]; then
+        python3 "$local_dir/verify.py" "$local_dir"
+    else
+        echo "WARNING: no per-deploy verify.py found; falling back to central HACC/verify.py"
+        python3 "$SCRIPT_DIR/verify.py" "$local_dir"
+    fi
 
     echo
     echo "=== Done."

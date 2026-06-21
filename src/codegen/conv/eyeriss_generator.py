@@ -285,9 +285,9 @@ def generate_experiment(mapping: MappingInfo, config: Dict[str, Any], out_dir: P
     wl   = (getattr(mapping, "workload", "") or "").upper().strip()
     aw   = (getattr(mapping, "arch_workload", "") or "").lower().strip()
 
-    if arch != "eyeriss" or wl != "CONV":
+    if arch not in ("eyeriss", "alveo-u55c") or wl != "CONV":
         raise ValueError(
-            f"[eyeriss_generator] Expected arch='eyeriss' and workload='CONV', "
+            f"[eyeriss_generator] Expected arch='eyeriss' or 'alveo-u55c' and workload='CONV', "
             f"got arch={arch!r}, workload={wl!r}, arch_workload={aw!r}"
         )
 

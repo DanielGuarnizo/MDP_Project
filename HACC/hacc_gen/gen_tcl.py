@@ -2,7 +2,7 @@ from .models import Interface
 
 
 def gen_script_to_xo(iface: Interface) -> str:
-    BASE, STEP = 0x10, 0x08
+    BASE, STEP = 0x10, 0x04
     addr_map = {arg: BASE + i * STEP for i, arg in enumerate(iface.scalar_args)}
 
     bus_assoc = "\n".join(
@@ -58,7 +58,7 @@ add_files -norecurse [list \\
   [file join $SRC_DIR panda_libtech.v] \\
 ]
 update_compile_order -fileset sources_1
-set_property top panda_wrapper [current_fileset]
+set_property top panda [current_fileset]
 update_compile_order -fileset sources_1
 
 # Package as IP / Vitis kernel
@@ -132,7 +132,9 @@ set -eo pipefail
 
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG="$DEPLOY_DIR/build_all.log"
-exec &> >(tee -a "$LOG")
+# Rotate previous log so each run starts clean
+[ -f "$LOG" ] && mv "$LOG" "$LOG.prev"
+exec &> >(tee "$LOG")
 echo "=== BUILD START $(date) ==="
 
 # Unset vars that Xilinx scripts expect to exist
@@ -163,36 +165,53 @@ cmake -S "$DEPLOY_DIR/host" -B "$DEPLOY_DIR/build/host"
 cmake --build "$DEPLOY_DIR/build/host" -j$(nproc)
 echo "=== Done: $(ls -lh $DEPLOY_DIR/build/host/bambu_application) ==="
 
+touch "${DEPLOY_DIR}/.build_done"
 echo "=== BUILD COMPLETE $(date) ==="
 """
 
 
-def gen_xo_to_xclbin(iface: Interface, platform: str, target: str, hbm_bank: str) -> str:
+def gen_xo_to_xclbin(iface: Interface, platform: str, target: str, hbm_bank: str,
+                     routing_directive: str = "AggressiveExplore") -> str:
     import re as _re
     # Spread each AXI master across sequential even HBM banks to reduce routing congestion.
     # e.g. HBM[0] base → gmem_0:HBM[0], gmem_1:HBM[2], gmem_2:HBM[4], ...
+    _HBM_MAX = 8  # U55C: HBM[8+] sits at 0x1_0000_0000+ (outside 4GB kernel aperture)
     _m = _re.match(r'HBM\[(\d+)\]', hbm_bank)
     if _m and len(iface.axi_bundles) > 1:
         _base = int(_m.group(1))
-        _banks = [f"HBM[{_base + i}]" for i in range(len(iface.axi_bundles))]
+        # Sort bundles numerically so gmem_2 < gmem_10, then assign round-robin within valid range
+        _sorted = sorted(iface.axi_bundles, key=lambda b: int(_re.search(r'\d+', b).group()))
+        _banks_map = {b: f"HBM[{_base + (i % _HBM_MAX)}]" for i, b in enumerate(_sorted)}
+        _banks = [_banks_map[b] for b in iface.axi_bundles]
     else:
         _banks = [hbm_bank] * len(iface.axi_bundles)
+    # Sort SP lines numerically for readability
+    _sp_pairs = sorted(
+        [(b, _banks[i]) for i, b in enumerate(iface.axi_bundles)],
+        key=lambda x: int(_re.search(r'\d+', x[0]).group())
+    )
     sp_lines = " \\\n".join(
-        f"  --connectivity.sp panda_1.{b}:{_banks[i]}"
-        for i, b in enumerate(iface.axi_bundles)
+        f"  --connectivity.sp panda_1.{b}:{bank}"
+        for b, bank in _sp_pairs
     )
     # For hw: routing directives + post-route power report hook.
-    # NOTE: --profile_kernel flags cause routing failure on large designs (n=96 PE)
-    # by exhausting routing resources with APM monitor insertion. Removed permanently.
-    # Power is obtained via post_route.tcl (report_power after ROUTE_DESIGN).
+    # NOTE: --profile_kernel (old API) is DEPRECATED in Vitis 2024.2 and fails to parse even
+    # with correct args, silently corrupting impl constraints and causing routing failure at
+    # exactly 22,720 stuck overlaps. Removed. The new API is --profile.kernel.port but requires
+    # the xo to be built with profiling support at compile time, not just link time.
+    # Hardware profiling via APM is not supported in this flow — use xrt.ini software profiling.
     hw_opts_lines = []
     if target == "hw":
         hw_opts_lines = [
-            "  --vivado.prop run.impl_1.STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE=AggressiveExplore \\",
+            f"  --vivado.prop run.impl_1.STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE={routing_directive} \\",
+            "  --vivado.prop run.impl_1.STEPS.PHYS_OPT_DESIGN.IS_ENABLED=true \\",
             "  --vivado.prop run.impl_1.STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED=true \\",
+            "  --vivado.prop run.impl_1.STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE=AggressiveExplore \\",
+            '  "--vivado.prop=run.impl_1.STEPS.PLACE_DESIGN.TCL.PRE=${SCRIPT_DIR}/pre_place_pblock.tcl" \\',
             '  --vivado.prop run.impl_1.STEPS.ROUTE_DESIGN.TCL.POST="${SCRIPT_DIR}/post_route.tcl" \\',
         ]
     hw_opts = ("\n" + "\n".join(hw_opts_lines)) if hw_opts_lines else ""
+    profile_line = ""  # Hardware APM profiling removed (see note above)
     return f"""\
 #!/usr/bin/env bash
 # xo_to_xclbin.sh — links panda.xo into a .xclbin
@@ -211,7 +230,7 @@ v++ -t {target} \\
   --log_dir    "${{SCRIPT_DIR}}/build/vpp/logs" \\
   --temp_dir   "${{SCRIPT_DIR}}/build/vpp/tmp" \\
   --report_dir "${{SCRIPT_DIR}}/build/vpp/reports" \\{hw_opts}
-{sp_lines} \\
+{sp_lines} \\{profile_line}
   -o "${{SCRIPT_DIR}}/xo/panda.xclbin"
 
 echo "Generated: ${{SCRIPT_DIR}}/xo/panda.xclbin"
