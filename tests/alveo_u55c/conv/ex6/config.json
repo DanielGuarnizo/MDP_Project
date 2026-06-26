@@ -13,7 +13,7 @@
     "force": false
   },
   "bambu": {
-    "clock_period": 3.0,
+    "clock_period": 8.0,
     "compiler": "I386_GCC8",
     "opt_level": 3,
     "device": { "name": "xcu55c-2Lfsvh2892-VVD", "physical_ports": 32 }

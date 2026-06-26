@@ -3,8 +3,8 @@
 /* AXI pragmas: inputs and outputs share bundles (time-multiplexed) */
 #pragma HLS interface port = dram_input_p0 mode = m_axi offset = direct bundle = gmem_0
 #pragma HLS interface port = dram_input_p1 mode = m_axi offset = direct bundle = gmem_1
-#pragma HLS interface port = dram_weight_p0 mode = m_axi offset = direct bundle = gmem_2
-#pragma HLS interface port = dram_weight_p1 mode = m_axi offset = direct bundle = gmem_3
+#pragma HLS interface port = dram_weight_p0 mode = m_axi offset = direct bundle = gmem_0
+#pragma HLS interface port = dram_weight_p1 mode = m_axi offset = direct bundle = gmem_1
 #pragma HLS interface port = dram_output_p0 mode = m_axi offset = direct bundle = gmem_0
 #pragma HLS interface port = dram_output_p1 mode = m_axi offset = direct bundle = gmem_1
 #pragma HLS interface port = dram_output_p2 mode = m_axi offset = direct bundle = gmem_2
@@ -22,6 +22,9 @@
 #pragma HLS interface port = dram_output_p14 mode = m_axi offset = direct bundle = gmem_14
 #pragma HLS interface port = dram_output_p15 mode = m_axi offset = direct bundle = gmem_15
 
+// GlobalBuffer scratchpads — filled once per top_level call from AXI ports
+static DTYPE gb_weight[64][64][3][3];
+static DTYPE gb_input[64][58][58];
 void top_level(DTYPE *dram_input_p0, DTYPE *dram_input_p1, DTYPE *dram_weight_p0, DTYPE *dram_weight_p1, DTYPE *dram_output_p0, DTYPE *dram_output_p1, DTYPE *dram_output_p2, DTYPE *dram_output_p3, DTYPE *dram_output_p4, DTYPE *dram_output_p5, DTYPE *dram_output_p6, DTYPE *dram_output_p7, DTYPE *dram_output_p8, DTYPE *dram_output_p9, DTYPE *dram_output_p10, DTYPE *dram_output_p11, DTYPE *dram_output_p12, DTYPE *dram_output_p13, DTYPE *dram_output_p14, DTYPE *dram_output_p15)
 {
     // SA (weight-preload) Eyeriss CONV — loop structure mirrors FF mapping hierarchy
@@ -37,6 +40,40 @@ void top_level(DTYPE *dram_input_p0, DTYPE *dram_input_p1, DTYPE *dram_weight_p0
     // sacols_1 → SACols_1 = M:2
     // 168 PE accumulators: accumulator[3][2][2][7][2]
     DTYPE accumulator[3][2][2][7][2];
+
+    // ---- GlobalBuffer weight preload: wt_ideal = 64*64*3*3 AXI reads ----
+    for (int _gm = 0; _gm < 64; ++_gm) {
+      for (int _gc = 0; _gc < 64; ++_gc) {
+        for (int _gr = 0; _gr < 3; ++_gr) {
+          for (int _gs = 0; _gs < 3; ++_gs) {
+            int weight_port_index = _gc % 2;
+            int _cb = _gc / 2;
+            int _wa = (_gm * ((64 + 2 - 1) / 2) + _cb) * (3 * 3) + _gr * 3 + _gs;
+            switch(weight_port_index) {
+              case 0: gb_weight[_gm][_gc][_gr][_gs] = dram_weight_p0[_wa]; break;
+              case 1: gb_weight[_gm][_gc][_gr][_gs] = dram_weight_p1[_wa]; break;
+              default: gb_weight[_gm][_gc][_gr][_gs] = 0.0f; break;
+            }
+          }
+        }
+      }
+    }
+
+    // ---- GlobalBuffer input preload: in_ideal = 64*58*58 AXI reads ----
+    for (int _gc = 0; _gc < 64; ++_gc) {
+      for (int _gr = 0; _gr < 58; ++_gr) {
+        for (int _gw = 0; _gw < 58; ++_gw) {
+          int input_port_index = _gc % 2;
+          int _cb = _gc / 2;
+          int _ia = _cb * (58 * 58) + _gr * 58 + _gw;
+          switch(input_port_index) {
+            case 0: gb_input[_gc][_gr][_gw] = dram_input_p0[_ia]; break;
+            case 1: gb_input[_gc][_gr][_gw] = dram_input_p1[_ia]; break;
+            default: gb_input[_gc][_gr][_gw] = 0.0f; break;
+          }
+        }
+      }
+    }
 
     // DRAM_0 = Q:2
     #pragma GCC nounroll
@@ -89,14 +126,7 @@ void top_level(DTYPE *dram_input_p0, DTYPE *dram_input_p1, DTYPE *dram_weight_p0
                         #pragma GCC unroll 2
                         for (int sacols_1 = 0; sacols_1 < 2; ++sacols_1) {
                           int global_channel_index = (dram_1 * 16 + wregister_0 * 2 + (sarows_1));
-                          int weight_port_index = global_channel_index % input_ports;
-                          int channel_block_index = global_channel_index / input_ports;
-                          int weight_dram_index = ((outregister_0 * 4 + (sarows_2*2 + sacols_1)) * ((C + input_ports - 1) / input_ports) + channel_block_index) * (R * S) + wregister_1 * S + sarows_0;
-                          switch(weight_port_index) {
-                            case 0: weight_tile[sarows_0][sarows_1][sarows_2][sacols_1] = dram_weight_p0[weight_dram_index]; break;
-                            case 1: weight_tile[sarows_0][sarows_1][sarows_2][sacols_1] = dram_weight_p1[weight_dram_index]; break;
-                            default: weight_tile[sarows_0][sarows_1][sarows_2][sacols_1] = 0.0f; break;
-                          }
+                          weight_tile[sarows_0][sarows_1][sarows_2][sacols_1] = gb_weight[(outregister_0 * 4 + (sarows_2*2 + sacols_1))][global_channel_index][wregister_1][sarows_0];
                         }  // sacols_1 (preload)
                       }  // sarows_2 (preload)
                     }  // sarows_1 (preload)
@@ -117,18 +147,9 @@ void top_level(DTYPE *dram_input_p0, DTYPE *dram_input_p1, DTYPE *dram_weight_p0
                           #pragma GCC unroll 2
                           for (int sacols_1 = 0; sacols_1 < 2; ++sacols_1) {  // M:2
                             int global_channel_index = (dram_1 * 16 + wregister_0 * 2 + (sarows_1));
-                            int input_port_index = global_channel_index % input_ports;
-                            int channel_block_index = global_channel_index / input_ports;
-                            int input_channel_base_address = channel_block_index * (H * W);
-                            int input_row_base_address = input_channel_base_address + (globalbuffer_1 + wregister_1) * W;
-                            int input_column_offset = output_col_base + sacols_0 + sarows_0;
+                            int input_col = output_col_base + sacols_0 + sarows_0;
                             DTYPE weight_value = weight_tile[sarows_0][sarows_1][sarows_2][sacols_1];
-                            DTYPE input_value;
-                            switch(input_port_index) {
-                              case 0: input_value = dram_input_p0[input_row_base_address + input_column_offset]; break;
-                              case 1: input_value = dram_input_p1[input_row_base_address + input_column_offset]; break;
-                              default: input_value = 0.0f; break;
-                            }
+                            DTYPE input_value = gb_input[global_channel_index][(globalbuffer_1 + wregister_1)][input_col];
                             product[sarows_0][sarows_1][sarows_2][sacols_0][sacols_1] = weight_value * input_value;
                           }  // sacols_1 (M:2)
                         }  // sacols_0 (Q:7)

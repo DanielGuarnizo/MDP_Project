@@ -60,6 +60,10 @@ def parse_interface(verilog_path: str) -> Interface:
     if not axi_bundles:
         print("WARNING: no m_axi bundles found.")
 
+    cp_m = re.search(r'--clock-period=([\d.]+)', content)
+    bambu_clock_period = float(cp_m.group(1)) if cp_m else None
+    verilog_line_count = content.count('\n') + 1
+
     arg_to_bundle = _match_args_to_bundles(scalar_args, axi_bundles)
     return Interface(
         scalar_args=scalar_args,
@@ -67,6 +71,8 @@ def parse_interface(verilog_path: str) -> Interface:
         arg_to_bundle=arg_to_bundle,
         axi_ports=axi_ports,
         buffer_sizes=buffer_sizes,
+        bambu_clock_period=bambu_clock_period,
+        verilog_line_count=verilog_line_count,
     )
 
 

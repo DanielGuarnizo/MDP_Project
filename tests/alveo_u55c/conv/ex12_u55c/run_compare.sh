@@ -41,50 +41,80 @@ run_bambu () {
   rm -rf "${outdir}"
   mkdir -p "${outdir}"
 
-  # Run Bambu inside its output directory so ALL generated files land there,
-  # and write the log there too.
   (
     cd "${outdir}"
     bambu "../../../${top}" \
       --top-fname=top_level \
       --generate-interface=INFER \
       --compiler=I386_GCC8 \
-      --clock-period=5 \
+      --clock-period=8 \
       --device-name=xcu55c-2Lfsvh2892-VVD \
       -O3 -v4 \
       --generate-tb="../../../${TB}" \
-      --tb-param-size=dram_input_p0:430592 \
-      --tb-param-size=dram_input_p1:430592 \
-      --tb-param-size=dram_weight_p0:73728 \
-      --tb-param-size=dram_weight_p1:73728 \
-      --tb-param-size=dram_output_p0:28672 \
-      --tb-param-size=dram_output_p1:28672 \
-      --tb-param-size=dram_output_p2:28672 \
-      --tb-param-size=dram_output_p3:28672 \
-      --tb-param-size=dram_output_p4:28672 \
-      --tb-param-size=dram_output_p5:28672 \
-      --tb-param-size=dram_output_p6:28672 \
-      --tb-param-size=dram_output_p7:28672 \
-      --tb-param-size=dram_output_p8:28672 \
-      --tb-param-size=dram_output_p9:28672 \
-      --tb-param-size=dram_output_p10:28672 \
-      --tb-param-size=dram_output_p11:28672 \
-      --tb-param-size=dram_output_p12:28672 \
-      --tb-param-size=dram_output_p13:28672 \
-      --tb-param-size=dram_output_p14:28672 \
-      --tb-param-size=dram_output_p15:28672 \
-      --tb-param-size=dram_output_p16:28672 \
-      --tb-param-size=dram_output_p17:28672 \
-      --tb-param-size=dram_output_p18:28672 \
-      --tb-param-size=dram_output_p19:28672 \
-      --tb-param-size=dram_output_p20:28672 \
-      --tb-param-size=dram_output_p21:28672 \
-      --tb-param-size=dram_output_p22:28672 \
-      --tb-param-size=dram_output_p23:28672 \
-      --tb-param-size=dram_output_p24:28672 \
-      --tb-param-size=dram_output_p25:28672 \
-      --tb-param-size=dram_output_p26:28672 \
-      --tb-param-size=dram_output_p27:28672 \
+      --tb-param-size=dram_input_p0:53824 \
+      --tb-param-size=dram_input_p1:53824 \
+      --tb-param-size=dram_input_p2:53824 \
+      --tb-param-size=dram_input_p3:53824 \
+      --tb-param-size=dram_input_p4:53824 \
+      --tb-param-size=dram_input_p5:53824 \
+      --tb-param-size=dram_input_p6:53824 \
+      --tb-param-size=dram_input_p7:53824 \
+      --tb-param-size=dram_input_p8:53824 \
+      --tb-param-size=dram_input_p9:53824 \
+      --tb-param-size=dram_input_p10:53824 \
+      --tb-param-size=dram_input_p11:53824 \
+      --tb-param-size=dram_input_p12:53824 \
+      --tb-param-size=dram_input_p13:53824 \
+      --tb-param-size=dram_input_p14:53824 \
+      --tb-param-size=dram_input_p15:53824 \
+      --tb-param-size=dram_weight_p0:9216 \
+      --tb-param-size=dram_weight_p1:9216 \
+      --tb-param-size=dram_weight_p2:9216 \
+      --tb-param-size=dram_weight_p3:9216 \
+      --tb-param-size=dram_weight_p4:9216 \
+      --tb-param-size=dram_weight_p5:9216 \
+      --tb-param-size=dram_weight_p6:9216 \
+      --tb-param-size=dram_weight_p7:9216 \
+      --tb-param-size=dram_weight_p8:9216 \
+      --tb-param-size=dram_weight_p9:9216 \
+      --tb-param-size=dram_weight_p10:9216 \
+      --tb-param-size=dram_weight_p11:9216 \
+      --tb-param-size=dram_weight_p12:9216 \
+      --tb-param-size=dram_weight_p13:9216 \
+      --tb-param-size=dram_weight_p14:9216 \
+      --tb-param-size=dram_weight_p15:9216 \
+      --tb-param-size=dram_output_p0:25088 \
+      --tb-param-size=dram_output_p1:25088 \
+      --tb-param-size=dram_output_p2:25088 \
+      --tb-param-size=dram_output_p3:25088 \
+      --tb-param-size=dram_output_p4:25088 \
+      --tb-param-size=dram_output_p5:25088 \
+      --tb-param-size=dram_output_p6:25088 \
+      --tb-param-size=dram_output_p7:25088 \
+      --tb-param-size=dram_output_p8:25088 \
+      --tb-param-size=dram_output_p9:25088 \
+      --tb-param-size=dram_output_p10:25088 \
+      --tb-param-size=dram_output_p11:25088 \
+      --tb-param-size=dram_output_p12:25088 \
+      --tb-param-size=dram_output_p13:25088 \
+      --tb-param-size=dram_output_p14:25088 \
+      --tb-param-size=dram_output_p15:25088 \
+      --tb-param-size=dram_output_p16:25088 \
+      --tb-param-size=dram_output_p17:25088 \
+      --tb-param-size=dram_output_p18:25088 \
+      --tb-param-size=dram_output_p19:25088 \
+      --tb-param-size=dram_output_p20:25088 \
+      --tb-param-size=dram_output_p21:25088 \
+      --tb-param-size=dram_output_p22:25088 \
+      --tb-param-size=dram_output_p23:25088 \
+      --tb-param-size=dram_output_p24:25088 \
+      --tb-param-size=dram_output_p25:25088 \
+      --tb-param-size=dram_output_p26:25088 \
+      --tb-param-size=dram_output_p27:25088 \
+      --tb-param-size=dram_output_p28:25088 \
+      --tb-param-size=dram_output_p29:25088 \
+      --tb-param-size=dram_output_p30:25088 \
+      --tb-param-size=dram_output_p31:25088 \
 ${float_mul_flag:+${float_mul_flag}} \
       --simulate
   ) > "${log}" 2>&1

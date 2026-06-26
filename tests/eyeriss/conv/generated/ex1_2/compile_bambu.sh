@@ -22,7 +22,7 @@ bambu "$TOP" \
   --generate-interface=INFER \
   --compiler=I386_GCC8 \
   --clock-period=5 \
-  --device-name=xcu55c-2Lfsvh2892-VVD \
+  --device-name=xc7z020-1clg484-VVD \
   -O3 -v4 \
   --generate-tb="$TB" \
   --tb-param-size=dram_input_p0:144 \

@@ -16,7 +16,7 @@
     "clock_period": 5,
     "compiler": "I386_GCC8",
     "opt_level": 3,
-    "device": { "name": "xcu55c-2Lfsvh2892-VVD", "physical_ports": 8 }
+    "device": { "name": "xc7z020-1clg484-VVD", "physical_ports": 8 }
   },
   "layout": {
     "ff_output_dir": "FF_output"

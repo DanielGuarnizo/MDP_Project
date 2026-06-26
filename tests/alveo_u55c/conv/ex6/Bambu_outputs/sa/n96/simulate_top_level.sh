@@ -31,10 +31,10 @@ make -f /usr/local/share/panda/libmdpi/Makefile.mk \
   CFLAGS=" -O3  -fno-ipa-icf -fipa-pta -fipa-pure-const -fno-ivopts -fno-partial-inlining -fno-stack-protector -fno-tree-builtin-call-dce -ftree-copy-prop -ftree-dce -fno-tree-loop-distribute-patterns -ftree-loop-if-convert -ftree-loop-if-convert-stores -fno-tree-vectorize -fwrapv --param max-completely-peeled-insns=250 --param tree-reassoc-width=128  --std=gnu11 -DCUSTOM_VERIFICATION -D__BAMBU__ -Wno-implicit-function-declaration -Wno-incompatible-function-pointer-types -Wno-int-conversion -Wuninitialized   -D__NO_INLINE__  -mlong-double-64  -m32  -fwrapv -flax-vector-conversions -msse2 -fno-strict-aliasing -D__builtin_bambu_time_start\(\)= -D__builtin_bambu_time_stop\(\)= -D__BAMBU_SIM__ -isystem /usr/local/share/panda/libmdpi/include " \
   BEH_CFLAGS="-DVERILATOR -isystem $(dirname $(which verilator))/../share/verilator/include/vltstd -isystem /usr/local/share/panda/libmdpi/include -D__M_IPC_FILENAME=\\\"${M_IPC_FILENAME}\\\" -D__M_OUT_LVL=${OUT_LVL} -D__M32 -O2" \
   TB_CFLAGS="" \
-  SRCS="/workspace/tests/eyeriss/conv/generated/ex6_1/top_level_sa.c" \
+  SRCS="/workspace/tests/alveo_u55c/conv/ex6/top_level_sa.c" \
   WRAPPER_SRC="${SIM_DIR}/mdpi_wrapper.cpp" \
   PP_SRC="" \
-  TB_SRCS="/workspace/tests/eyeriss/conv/generated/ex6_1/testbench_common.c" \
+  TB_SRCS="/workspace/tests/alveo_u55c/conv/ex6/testbench_common.c" \
   -j ${OMP_NUM_THREADS:-8}
 
 verilator --cc --exe --Mdir ${obj_dir} -Wno-fatal -Wno-lint -sv  +define+__M32 +define+__BAMBU_SIM__ ${BEH_DIR}/libmdpi.so -O3 --unroll-count 10000 --output-split-cfuncs 3000  --output-split-ctrace 3000 --x-assign fast --x-initial fast --noassert top_level.v HLS_output/simulation/bambu_testbench.v ${BEH_DIR}/libmdpi.so HLS_output/beh_sim/sim_main.cpp --top-module bambu_testbench

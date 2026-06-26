@@ -165,7 +165,13 @@
       "Bash(xargs cat)",
       "Bash(rsync -az /Users/danielguarnizo/workspace/Master/MDP/HACC/ex6_1_N_mul_96/ dguarnizo@hacc-build-01.inf.ethz.ch:~/workspace/deploy/ex6_1_N_mul_96/)",
       "Bash(cp HACC/lib/xrt.ini HACC/ex6_1_N_mul_1_v7/xrt.ini)",
-      "Bash(cp HACC/lib/xrt.ini HACC/ex6_1_N_mul_96_v6/xrt.ini)"
+      "Bash(cp HACC/lib/xrt.ini HACC/ex6_1_N_mul_96_v6/xrt.ini)",
+      "Bash(awk '/^module __float_mule8m23b_127nih/{found=1; start=NR} found && /^endmodule/{print NR-start+1\" lines\"; exit}' /Users/danielguarnizo/workspace/Master/MDP/HACC/ex6_n_mul_96_updated/src/top_level.v)",
+      "Bash(awk '/^module __float_mule8m23b_127nih/{found=1; start=NR} found && /^endmodule/{print NR-start+1\" lines\"; exit}' /Users/danielguarnizo/workspace/Master/MDP/HACC/ex6_1_N_mul_96_v8/src/top_level.v)",
+      "Bash(awk '/^module Controller_i\\\\b/{found=1; start=NR} found && /^endmodule/{print NR-start+1\" lines\"; exit}' /Users/danielguarnizo/workspace/Master/MDP/HACC/ex6_n_mul_96_updated/src/top_level.v)",
+      "Bash(awk '/^module Controller_i\\\\b/{found=1; start=NR} found && /^endmodule/{print NR-start+1\" lines\"; exit}' /Users/danielguarnizo/workspace/Master/MDP/HACC/ex6_1_N_mul_96_v8/src/top_level.v)",
+      "Bash(awk '/^module /{name=$2; start=NR} /^endmodule/{if\\(name\\) print NR-start+1, name; name=\"\"}' /Users/danielguarnizo/workspace/Master/MDP/HACC/ex6_n_mul_96_updated/src/top_level.v)",
+      "Bash(awk '/^module /{name=$2; start=NR} /^endmodule/{if\\(name\\) print NR-start+1, name; name=\"\"}' /Users/danielguarnizo/workspace/Master/MDP/HACC/ex6_1_N_mul_96_v8/src/top_level.v)"
     ]
   }
 }

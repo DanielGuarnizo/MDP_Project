@@ -41,15 +41,13 @@ run_bambu () {
   rm -rf "${outdir}"
   mkdir -p "${outdir}"
 
-  # Run Bambu inside its output directory so ALL generated files land there,
-  # and write the log there too.
   (
     cd "${outdir}"
     bambu "../../../${top}" \
       --top-fname=top_level \
       --generate-interface=INFER \
       --compiler=I386_GCC8 \
-      --clock-period=5 \
+      --clock-period=8 \
       --device-name=xcu55c-2Lfsvh2892-VVD \
       -O3 -v4 \
       --generate-tb="../../../${TB}" \

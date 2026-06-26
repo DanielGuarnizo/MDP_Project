@@ -21,7 +21,7 @@ bambu "$TOP" \
   --top-fname=top_level \
   --generate-interface=INFER \
   --compiler=I386_GCC8 \
-  --clock-period=5 \
+  --clock-period=8 \
   --device-name=xcu55c-2Lfsvh2892-VVD \
   -O3 -v4 \
   --generate-tb="$TB" \

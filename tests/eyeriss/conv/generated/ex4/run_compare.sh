@@ -41,8 +41,6 @@ run_bambu () {
   rm -rf "${outdir}"
   mkdir -p "${outdir}"
 
-  # Run Bambu inside its output directory so ALL generated files land there,
-  # and write the log there too.
   (
     cd "${outdir}"
     bambu "../../../${top}" \

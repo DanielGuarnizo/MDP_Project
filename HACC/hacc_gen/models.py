@@ -24,11 +24,13 @@ class PortDecl:
 
 @dataclass
 class Interface:
-    scalar_args:   List[str]
-    axi_bundles:   List[str]
-    arg_to_bundle: Dict[str, str]
-    axi_ports:     List[PortDecl]
-    buffer_sizes:  Dict[str, int]
+    scalar_args:          List[str]
+    axi_bundles:          List[str]
+    arg_to_bundle:        Dict[str, str]
+    axi_ports:            List[PortDecl]
+    buffer_sizes:         Dict[str, int]
+    bambu_clock_period:   Optional[float] = None  # ns, from --clock-period in Bambu header
+    verilog_line_count:   Optional[int]   = None  # total lines in top_level.v
 
 
 def _port_str(direction: str, width: Optional[str], name: str) -> str:

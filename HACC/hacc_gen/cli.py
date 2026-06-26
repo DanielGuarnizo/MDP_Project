@@ -115,6 +115,8 @@ def main() -> None:
     print(f"  AXI bundles  : {iface.axi_bundles}")
     print(f"  arg→bundle   : {iface.arg_to_bundle}")
     print(f"  buffer sizes : {iface.buffer_sizes}")
+    print(f"  clock period : {iface.bambu_clock_period} ns")
+    print(f"  verilog lines: {iface.verilog_line_count}")
     print(f"  directions   : { {a: infer_direction(a) for a in iface.scalar_args} }")
     print()
 
