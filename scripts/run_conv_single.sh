@@ -12,8 +12,8 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# CONV_DIR="$REPO_ROOT/tests/eyeriss/conv/generated"
-CONV_DIR="$REPO_ROOT/experiments/eyeriss/conv"
+CONV_DIR="$REPO_ROOT/tests/eyeriss/conv/generated"
+# CONV_DIR="$REPO_ROOT/experiments/eyeriss/conv"
 # CONV_DIR="$REPO_ROOT/tests/alveo_u55c/conv"
 
 # N_mul sweep per experiment (powers of 2 from 1 to U, plus U if not power of 2)
