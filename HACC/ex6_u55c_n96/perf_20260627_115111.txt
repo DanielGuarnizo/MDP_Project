@@ -1,0 +1,36 @@
+
+================================================================
+  PERFORMANCE ANALYSIS — ex6_u55c_n96
+  2026-06-27 11:51:11
+================================================================
+
+--- Execution Time (host wall-clock) --------------------------------
+  CPU->FPGA transfer  : 20.536 ms    <- PCIe DMA + XRT sync
+  Kernel execution    : 0.351 ms        <- host stopwatch (includes PCIe round-trip ~0.1-0.2 ms)
+  FPGA->CPU transfer  : 87.274 ms    <- PCIe DMA + XRT sync
+  Total (steps 4-7)   : 108.162 ms
+  Kernel cycles (@300.030 MHz): 105310  <- kern_ms / clk_period (from timing report; fallback 300 MHz)
+
+--- Timing (Vivado post-route) ---------------------------------------
+  Status              : TIMING VIOLATION (design may be unreliable; FPGA clocked at 300.030 MHz)
+  Operating clock     : 300.030 MHz  (3.333 ns period from timing report)
+  WNS                 : -7.769 ns
+  Max timing-met freq : 90.1 MHz   <- 1000/(period-WNS); NOT the operating freq
+  Source              : impl_1_hw_bb_locked_timing_summary_postroute_physopted.rpt
+
+--- Resource Utilization -------------------------------------------
+  CLB LUTs            : 197015 / 1303680  (15.11%)
+  CLB Registers       : 258039 / 2607360  (9.90%)
+  RAMB36              : 199 / 2016  (9.87%)
+  DSPs                : 46 / 9024  (0.51%)
+  Source              : impl_1_full_util_routed.rpt
+
+--- Power (Vivado estimated, post-route) ---------------------------
+  Total On-Chip       : 23.844 W
+  Dynamic             : 15.815 W
+  Static              : 8.029 W
+  Source              : impl_1_power_routed.rpt
+
+================================================================
+  Report saved: /Users/danielguarnizo/workspace/Master/MDP/HACC/ex6_u55c_n96/perf_20260627_115111.txt
+================================================================

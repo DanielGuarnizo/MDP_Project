@@ -171,7 +171,9 @@
       "Bash(awk '/^module Controller_i\\\\b/{found=1; start=NR} found && /^endmodule/{print NR-start+1\" lines\"; exit}' /Users/danielguarnizo/workspace/Master/MDP/HACC/ex6_n_mul_96_updated/src/top_level.v)",
       "Bash(awk '/^module Controller_i\\\\b/{found=1; start=NR} found && /^endmodule/{print NR-start+1\" lines\"; exit}' /Users/danielguarnizo/workspace/Master/MDP/HACC/ex6_1_N_mul_96_v8/src/top_level.v)",
       "Bash(awk '/^module /{name=$2; start=NR} /^endmodule/{if\\(name\\) print NR-start+1, name; name=\"\"}' /Users/danielguarnizo/workspace/Master/MDP/HACC/ex6_n_mul_96_updated/src/top_level.v)",
-      "Bash(awk '/^module /{name=$2; start=NR} /^endmodule/{if\\(name\\) print NR-start+1, name; name=\"\"}' /Users/danielguarnizo/workspace/Master/MDP/HACC/ex6_1_N_mul_96_v8/src/top_level.v)"
+      "Bash(awk '/^module /{name=$2; start=NR} /^endmodule/{if\\(name\\) print NR-start+1, name; name=\"\"}' /Users/danielguarnizo/workspace/Master/MDP/HACC/ex6_1_N_mul_96_v8/src/top_level.v)",
+      "Bash(rsync -az ex6_n96_8ns_100mhz_v2 hacc-build-01:~/workspace/deploy/)",
+      "Bash(echo \"rsync: $?\")"
     ]
   }
 }

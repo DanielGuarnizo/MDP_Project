@@ -1,0 +1,30 @@
+================================================================
+  n1 vs n96 comparison — ex6 CONV (M4 P6 Q6 C4 R3 S1, 1728 MACs)
+  Both: Bambu --clock-period=8.0, same C source, fixed generator
+  Date: 2026-07-31   Node: alveo-u55c-01
+  n1 correctness: SUCCESS 144/144 first run, NO patches (pipeline validated)
+================================================================
+
+               |     n1 (-C=1)      |    n96 (-C=96)
+---------------|--------------------|-------------------
+FP multipliers | 1 (shared)         | 96 (parallel)
+Verilog lines  | 70,070             | 65,638
+WNS (vs 3.3ns) | -3.253 ns          | -6.830 ns
+XRT auto clock | 151 MHz            | 98.3 MHz
+Build time     | ~9.5 h             | ~15 h
+Kernel min     | 0.284 ms           | 0.219 ms
+Kernel mean    | 0.347 ms           | 0.287 ms
+Cycles (min)   | ~43.1K @151MHz     | ~21.5K @98.3MHz
+
+n1 runs (ms): 0.385 0.327 0.364 0.379 0.336 0.357 0.368 0.319 0.284 0.348
+
+Analysis:
+- Cycle count: n1 needs ~2.0x the cycles of n96 — NOT ~96x, because this tiny
+  workload is dominated by AXI reads/control, not FP compute (each of n96's
+  PEs does only 18 MACs; the shared-multiplier serialization in n1 adds ~21.6K
+  cycles ≈ 1728 MACs x ~12 cycles/MAC of shared-FPU scheduling).
+- Wall time: n1 is only 1.30x slower — its smaller netlist routes better
+  (WNS -3.25 vs -6.83) so XRT clocks it 1.54x faster, masking the cycle gap.
+- Implication for FactorFlow calibration: at these dims the accelerator is
+  memory/control-bound; a compute-bound comparison (and bandwidth data)
+  requires the planned larger CONV workload.

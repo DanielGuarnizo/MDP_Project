@@ -5,7 +5,7 @@ from typing import Dict, List
 from .models import AXI_SIGNAL_SUFFIXES, CONTROL_PORTS, Interface, PortDecl
 
 
-def parse_interface(verilog_path: str) -> Interface:
+def parse_interface(verilog_path: str, c_source_path: str = None) -> Interface:
     with open(verilog_path) as f:
         content = f.read()
 
@@ -65,6 +65,18 @@ def parse_interface(verilog_path: str) -> Interface:
     verilog_line_count = content.count('\n') + 1
 
     arg_to_bundle = _match_args_to_bundles(scalar_args, axi_bundles)
+
+    # C-source pragmas are the ground truth Bambu compiled against — they override
+    # the name-based heuristic, which cannot know when args share a bundle
+    # (e.g. weights time-multiplexed on the input bundles).
+    if c_source_path:
+        pragma_map = _parse_c_pragma_bundles(c_source_path, axi_bundles)
+        overridden = {a: b for a, b in pragma_map.items()
+                      if a in scalar_args and arg_to_bundle.get(a) != b}
+        if overridden:
+            print(f"  bundle override from C pragmas: {overridden}")
+        arg_to_bundle.update({a: b for a, b in pragma_map.items() if a in scalar_args})
+
     return Interface(
         scalar_args=scalar_args,
         axi_bundles=axi_bundles,
@@ -74,6 +86,21 @@ def parse_interface(verilog_path: str) -> Interface:
         bambu_clock_period=bambu_clock_period,
         verilog_line_count=verilog_line_count,
     )
+
+
+def _parse_c_pragma_bundles(c_source_path: str, axi_bundles: List[str]) -> Dict[str, str]:
+    """Parse `#pragma HLS interface port = X ... bundle = Y` from the C source
+    and resolve Y (e.g. 'gmem_0') to the full RTL bundle name (e.g. 'm_axi_gmem_0')."""
+    with open(c_source_path) as f:
+        text = f.read()
+    by_suffix = {re.sub(r'^m_axi_', '', b): b for b in axi_bundles}
+    result: Dict[str, str] = {}
+    for arg, bundle in re.findall(
+            r'#pragma\s+HLS\s+interface\s+port\s*=\s*(\w+).*?bundle\s*=\s*(\w+)', text):
+        full = by_suffix.get(bundle)
+        if full:
+            result[arg] = full
+    return result
 
 
 def _match_args_to_bundles(scalar_args: List[str], axi_bundles: List[str]) -> Dict[str, str]:

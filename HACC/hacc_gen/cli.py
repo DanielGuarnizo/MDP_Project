@@ -53,9 +53,13 @@ def main() -> None:
                    default='AggressiveExplore',
                    choices=['AggressiveExplore', 'Explore',
                             'NoTimingRelaxation', 'Default', 'AlternateCLBRouting'],
-                   help='Vivado route_design directive (default: AggressiveExplore; '
-                        'use Explore when AggressiveExplore leaves 1-2 overlaps; '
-                        'avoid AlternateCLBRouting — conflicts with U55C platform IPs)')
+                   help='Vivado route_design directive (default: AggressiveExplore)')
+    p.add_argument('--placement-directive',
+                   default=None,
+                   choices=['AltSpreadLogic_high', 'AltSpreadLogic_medium', 'AltSpreadLogic_low',
+                            'Explore', 'WLDrivenBlockPlacement', 'Default'],
+                   help='Vivado place_design directive (default: none = Vivado default placement). '
+                        'Pass AltSpreadLogic_high to spread logic when routing congestion is severe.')
     p.add_argument('--c-source', default=None, metavar='PATH',
                    help='Path to top_level_sa.c — enables per-deploy verify.py '
                         'with exact PORT_TO_MQ table baked in (no formula inference).')
@@ -110,7 +114,7 @@ def main() -> None:
         d.mkdir(parents=True, exist_ok=True)
 
     print(f"\nParsing: {args.verilog}")
-    iface = parse_interface(args.verilog)
+    iface = parse_interface(args.verilog, c_source_path=args.c_source)
     print(f"  scalar args  : {iface.scalar_args}")
     print(f"  AXI bundles  : {iface.axi_bundles}")
     print(f"  arg→bundle   : {iface.arg_to_bundle}")
@@ -144,7 +148,7 @@ def main() -> None:
 
     xo_sh = out / 'xo_to_xclbin.sh'
     xo_sh.write_text(gen_xo_to_xclbin(iface, args.platform, args.target, args.hbm_bank,
-                                       args.routing_directive))
+                                       args.routing_directive, args.placement_directive))
     xo_sh.chmod(0o755)
     print("Generated xo_to_xclbin.sh")
 

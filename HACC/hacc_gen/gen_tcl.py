@@ -171,7 +171,8 @@ echo "=== BUILD COMPLETE $(date) ==="
 
 
 def gen_xo_to_xclbin(iface: Interface, platform: str, target: str, hbm_bank: str,
-                     routing_directive: str = "AggressiveExplore") -> str:
+                     routing_directive: str = "AggressiveExplore",
+                     placement_directive: str = None) -> str:
     import re as _re
     # Spread each AXI master across sequential even HBM banks to reduce routing congestion.
     # e.g. HBM[0] base → gmem_0:HBM[0], gmem_1:HBM[2], gmem_2:HBM[4], ...
@@ -200,23 +201,6 @@ def gen_xo_to_xclbin(iface: Interface, platform: str, target: str, hbm_bank: str
     # exactly 22,720 stuck overlaps. Removed. The new API is --profile.kernel.port but requires
     # the xo to be built with profiling support at compile time, not just link time.
     # Hardware profiling via APM is not supported in this flow — use xrt.ini software profiling.
-    _LARGE_LINE_THRESH  = 55_000
-    _TIGHT_CLOCK_THRESH = 4.5  # ns: covers 3.0, 3.3; excludes 5.0, 8.0 (Serena recommended default)
-
-    is_large       = (iface.verilog_line_count or 0) > _LARGE_LINE_THRESH
-    is_tight_clock = (iface.bambu_clock_period or 999) < _TIGHT_CLOCK_THRESH
-    use_spread_placement = False
-
-    if is_large and is_tight_clock and routing_directive == "AggressiveExplore":
-        routing_directive = "Explore"
-        use_spread_placement = True
-        print(
-            f"WARNING: large design ({iface.verilog_line_count} lines, "
-            f"clock={iface.bambu_clock_period} ns). "
-            f"Auto-switching routing → Explore + AltSpreadLogic_high placement "
-            f"to reduce congestion."
-        )
-
     hw_opts_lines = []
     if target == "hw":
         hw_opts_lines = [
@@ -227,9 +211,9 @@ def gen_xo_to_xclbin(iface: Interface, platform: str, target: str, hbm_bank: str
             '  "--vivado.prop=run.impl_1.STEPS.PLACE_DESIGN.TCL.PRE=${SCRIPT_DIR}/pre_place_pblock.tcl" \\',
             '  --vivado.prop run.impl_1.STEPS.ROUTE_DESIGN.TCL.POST="${SCRIPT_DIR}/post_route.tcl" \\',
         ]
-        if use_spread_placement:
+        if placement_directive:
             hw_opts_lines.insert(0,
-                "  --vivado.prop run.impl_1.STEPS.PLACE_DESIGN.ARGS.DIRECTIVE=AltSpreadLogic_high \\"
+                f"  --vivado.prop run.impl_1.STEPS.PLACE_DESIGN.ARGS.DIRECTIVE={placement_directive} \\"
             )
     hw_opts = ("\n" + "\n".join(hw_opts_lines)) if hw_opts_lines else ""
     profile_line = ""  # Hardware APM profiling removed (see note above)

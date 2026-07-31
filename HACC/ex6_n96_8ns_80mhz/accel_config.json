@@ -1,0 +1,238 @@
+{
+  "kernel_name": "panda",
+  "buffers": [
+    {
+      "name": "dram_input_p0",
+      "size_bytes": 192,
+      "direction": "input",
+      "group_id": 0,
+      "axi_bundle": "m_axi_gmem_0"
+    },
+    {
+      "name": "dram_input_p1",
+      "size_bytes": 192,
+      "direction": "input",
+      "group_id": 1,
+      "axi_bundle": "m_axi_gmem_1"
+    },
+    {
+      "name": "dram_input_p2",
+      "size_bytes": 192,
+      "direction": "input",
+      "group_id": 2,
+      "axi_bundle": "m_axi_gmem_2"
+    },
+    {
+      "name": "dram_input_p3",
+      "size_bytes": 192,
+      "direction": "input",
+      "group_id": 3,
+      "axi_bundle": "m_axi_gmem_3"
+    },
+    {
+      "name": "dram_weight_p0",
+      "size_bytes": 48,
+      "direction": "inout",
+      "group_id": 4,
+      "axi_bundle": "m_axi_gmem_4"
+    },
+    {
+      "name": "dram_weight_p1",
+      "size_bytes": 48,
+      "direction": "inout",
+      "group_id": 5,
+      "axi_bundle": "m_axi_gmem_5"
+    },
+    {
+      "name": "dram_weight_p2",
+      "size_bytes": 48,
+      "direction": "inout",
+      "group_id": 6,
+      "axi_bundle": "m_axi_gmem_6"
+    },
+    {
+      "name": "dram_weight_p3",
+      "size_bytes": 48,
+      "direction": "inout",
+      "group_id": 7,
+      "axi_bundle": "m_axi_gmem_7"
+    },
+    {
+      "name": "dram_output_p0",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 8,
+      "axi_bundle": "m_axi_gmem_0"
+    },
+    {
+      "name": "dram_output_p1",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 9,
+      "axi_bundle": "m_axi_gmem_1"
+    },
+    {
+      "name": "dram_output_p2",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 10,
+      "axi_bundle": "m_axi_gmem_2"
+    },
+    {
+      "name": "dram_output_p3",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 11,
+      "axi_bundle": "m_axi_gmem_3"
+    },
+    {
+      "name": "dram_output_p4",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 12,
+      "axi_bundle": "m_axi_gmem_4"
+    },
+    {
+      "name": "dram_output_p5",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 13,
+      "axi_bundle": "m_axi_gmem_5"
+    },
+    {
+      "name": "dram_output_p6",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 14,
+      "axi_bundle": "m_axi_gmem_6"
+    },
+    {
+      "name": "dram_output_p7",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 15,
+      "axi_bundle": "m_axi_gmem_7"
+    },
+    {
+      "name": "dram_output_p8",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 16,
+      "axi_bundle": "m_axi_gmem_8"
+    },
+    {
+      "name": "dram_output_p9",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 17,
+      "axi_bundle": "m_axi_gmem_9"
+    },
+    {
+      "name": "dram_output_p10",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 18,
+      "axi_bundle": "m_axi_gmem_10"
+    },
+    {
+      "name": "dram_output_p11",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 19,
+      "axi_bundle": "m_axi_gmem_11"
+    },
+    {
+      "name": "dram_output_p12",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 20,
+      "axi_bundle": "m_axi_gmem_12"
+    },
+    {
+      "name": "dram_output_p13",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 21,
+      "axi_bundle": "m_axi_gmem_13"
+    },
+    {
+      "name": "dram_output_p14",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 22,
+      "axi_bundle": "m_axi_gmem_14"
+    },
+    {
+      "name": "dram_output_p15",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 23,
+      "axi_bundle": "m_axi_gmem_15"
+    },
+    {
+      "name": "dram_output_p16",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 24,
+      "axi_bundle": "m_axi_gmem_16"
+    },
+    {
+      "name": "dram_output_p17",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 25,
+      "axi_bundle": "m_axi_gmem_17"
+    },
+    {
+      "name": "dram_output_p18",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 26,
+      "axi_bundle": "m_axi_gmem_18"
+    },
+    {
+      "name": "dram_output_p19",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 27,
+      "axi_bundle": "m_axi_gmem_19"
+    },
+    {
+      "name": "dram_output_p20",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 28,
+      "axi_bundle": "m_axi_gmem_20"
+    },
+    {
+      "name": "dram_output_p21",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 29,
+      "axi_bundle": "m_axi_gmem_21"
+    },
+    {
+      "name": "dram_output_p22",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 30,
+      "axi_bundle": "m_axi_gmem_22"
+    },
+    {
+      "name": "dram_output_p23",
+      "size_bytes": 24,
+      "direction": "output",
+      "group_id": 31,
+      "axi_bundle": "m_axi_gmem_23"
+    }
+  ],
+  "workload": {
+    "type": "conv",
+    "M": 4,
+    "P": 6,
+    "Q": 6,
+    "C": 4,
+    "R": 3,
+    "S": 1
+  }
+}
