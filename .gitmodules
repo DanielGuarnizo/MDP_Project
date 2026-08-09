@@ -1,6 +1,6 @@
 [submodule "FactorFlow"]
 	path = FactorFlow
-	url = https://github.com/EMJzero/FactorFlow.git
+	url = https://github.com/DanielGuarnizo/FactorFlow.git
 	branch = master
 
 [submodule "PandA-bambu"]
